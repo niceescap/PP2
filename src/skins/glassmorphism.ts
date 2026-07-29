@@ -5,10 +5,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { FitPoint, MapBounds } from '../fit/types.js';
-import { ISkin, SkinConfig, CustomizableField } from './types.js';
+import { ISkin, SkinConfig, DEFAULT_CONFIG, CustomizableField } from './types.js';
 
 const GLASS_DEFAULTS: Partial<SkinConfig> = {
-  bgMode: 'green',
   primaryColor: '#ffffff',
   secondaryColor: 'rgba(255,255,255,0.7)',
   accentColor: '#00e5ff',
@@ -30,16 +29,10 @@ export class Glassmorphism implements ISkin {
   config: SkinConfig;
   
   constructor(config?: Partial<SkinConfig>) {
-    this.config = { ...this.getDefaultConfig(), ...config };
-  }
-  
-  private getDefaultConfig(): SkinConfig {
-    const { DEFAULT_CONFIG } = require('./types.js');
-    return { ...DEFAULT_CONFIG, ...GLASS_DEFAULTS } as SkinConfig;
+    this.config = { ...DEFAULT_CONFIG, ...GLASS_DEFAULTS, ...config };
   }
   
   getCustomizableFields(): CustomizableField[] {
-    const base = new (Object.getPrototypeOf(this.constructor) as any)();
     return [
       { key: 'bgMode', label: 'Fond', type: 'select', options: [
         { value: 'green', label: 'Vert Chroma' },
@@ -69,7 +62,6 @@ export class Glassmorphism implements ISkin {
   ): void {
     const c = this.config;
     
-    // Background
     if (c.bgMode === 'green') {
       ctx.fillStyle = c.bgColor;
       ctx.fillRect(0, 0, W, H);
@@ -85,23 +77,23 @@ export class Glassmorphism implements ISkin {
       const px = (W - panelW) / 2;
       const py = padY;
       
-      // Glass panel background
       ctx.save();
       ctx.globalAlpha = 0.85;
       ctx.fillStyle = 'rgba(255,255,255,0.08)';
       ctx.beginPath();
-      ctx.roundRect(px, py, panelW, panelH, 20);
+      if ((ctx as any).roundRect) (ctx as any).roundRect(px, py, panelW, panelH, 20);
+      else ctx.rect(px, py, panelW, panelH);
       ctx.fill();
-      // Glass border
+      
       ctx.globalAlpha = 0.4;
       ctx.strokeStyle = 'rgba(255,255,255,0.2)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(px, py, panelW, panelH, 20);
+      if ((ctx as any).roundRect) (ctx as any).roundRect(px, py, panelW, panelH, 20);
+      else ctx.rect(px, py, panelW, panelH);
       ctx.stroke();
       ctx.restore();
       
-      // Power value
       const pcx = px + panelW / 2;
       const pcy = py + panelH * 0.45;
       
@@ -115,22 +107,17 @@ export class Glassmorphism implements ISkin {
       ctx.fillStyle = c.secondaryColor;
       ctx.fillText('WATTS', pcx, pcy + c.fontSizePower * 0.45);
       
-      // Avg line
+      // Avg bar
       const avgY = py + panelH * 0.78;
       const avgW = panelW * 0.6;
       const avgX = px + (panelW - avgW) / 2;
       
       ctx.fillStyle = c.gaugeBgColor;
-      ctx.beginPath();
-      ctx.roundRect(avgX, avgY, avgW, 4, 2);
-      ctx.fill();
+      ctx.fillRect(avgX, avgY, avgW, 4);
       
       if (meta.maxPower > 0 && meta.avgPower > 0) {
-        const avgRatio = meta.avgPower / meta.maxPower;
         ctx.fillStyle = c.gaugeFillColor;
-        ctx.beginPath();
-        ctx.roundRect(avgX, avgY, avgW * avgRatio, 4, 2);
-        ctx.fill();
+        ctx.fillRect(avgX, avgY, avgW * (meta.avgPower / meta.maxPower), 4);
       }
       
       ctx.font = `500 ${c.fontSizeMetrics * 0.55}px ${c.fontFamily}`;
@@ -138,15 +125,19 @@ export class Glassmorphism implements ISkin {
       ctx.fillText(`AVG ${Math.round(meta.avgPower)}W`, pcx, avgY + 18);
     }
     
-    // Glass panel — metrics grid
+    // Metrics grid
     this.drawMetricsGrid(ctx, point, meta, padX, H * 0.62, W - padX * 2, c.fontSizeMetrics);
     
-    // Time
     if (c.showTime) {
-      this.drawTime(ctx, meta.elapsed, W - padX, padY + 10);
+      const m = Math.floor(meta.elapsed / 60);
+      const s = Math.floor(meta.elapsed % 60);
+      ctx.font = `500 24px ${c.fontFamily}`;
+      ctx.fillStyle = c.secondaryColor;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`${m}:${String(s).padStart(2,'0')}`, W - padX, padY + 10);
     }
     
-    // Map
     if (c.showMap && bounds) {
       this.drawMap(ctx, W, H, point, allPoints, currentIndex, bounds);
     }
@@ -178,12 +169,12 @@ export class Glassmorphism implements ISkin {
       const mx = x + col * colW;
       const my = y + row * rowH;
       
-      // Mini glass panel
       ctx.save();
       ctx.globalAlpha = 0.7;
       ctx.fillStyle = 'rgba(255,255,255,0.05)';
       ctx.beginPath();
-      ctx.roundRect(mx + 4, my, colW - 8, rowH - 8, 12);
+      if ((ctx as any).roundRect) (ctx as any).roundRect(mx + 4, my, colW - 8, rowH - 8, 12);
+      else ctx.rect(mx + 4, my, colW - 8, rowH - 8);
       ctx.fill();
       ctx.restore();
       
@@ -197,17 +188,6 @@ export class Glassmorphism implements ISkin {
       ctx.fillStyle = c.secondaryColor;
       ctx.fillText(m.label, mx + colW / 2, my + rowH * 0.72);
     });
-  }
-  
-  private drawTime(ctx: CanvasRenderingContext2D, elapsed: number, x: number, y: number): void {
-    const c = this.config;
-    const m = Math.floor(elapsed / 60);
-    const s = Math.floor(elapsed % 60);
-    ctx.font = `500 24px ${c.fontFamily}`;
-    ctx.fillStyle = c.secondaryColor;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'top';
-    ctx.fillText(`${m}:${String(s).padStart(2,'0')}`, x, y);
   }
   
   private drawMap(
@@ -232,18 +212,19 @@ export class Glassmorphism implements ISkin {
       default: mx = W - mapW - pad; my = H - mapH - pad;
     }
     
-    // Glass map panel
     ctx.save();
     ctx.globalAlpha = c.mapOpacity;
     ctx.fillStyle = c.mapBgColor;
     ctx.beginPath();
-    ctx.roundRect(mx, my, mapW, mapH, 12);
+    if ((ctx as any).roundRect) (ctx as any).roundRect(mx, my, mapW, mapH, 12);
+    else ctx.rect(mx, my, mapW, mapH);
     ctx.fill();
     ctx.restore();
     
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(mx, my, mapW, mapH, 12);
+    if ((ctx as any).roundRect) (ctx as any).roundRect(mx, my, mapW, mapH, 12);
+    else ctx.rect(mx, my, mapW, mapH);
     ctx.clip();
     
     const latSpan = bounds.maxLat - bounds.minLat || 0.001;
@@ -257,7 +238,6 @@ export class Glassmorphism implements ISkin {
       y: offY + (bounds.maxLat - lat) * scale
     });
     
-    // Full track
     ctx.beginPath();
     ctx.strokeStyle = 'rgba(255,255,255,0.15)';
     ctx.lineWidth = c.mapTrackWidth * 0.5;
@@ -270,7 +250,6 @@ export class Glassmorphism implements ISkin {
     }
     ctx.stroke();
     
-    // Completed track
     ctx.beginPath();
     ctx.strokeStyle = c.mapTrackColor;
     ctx.lineWidth = c.mapTrackWidth;
@@ -285,7 +264,6 @@ export class Glassmorphism implements ISkin {
     }
     ctx.stroke();
     
-    // Current dot
     if (point.lat !== null && point.lon !== null) {
       const pt = project(point.lat, point.lon);
       ctx.beginPath();
