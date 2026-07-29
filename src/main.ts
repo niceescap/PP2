@@ -427,32 +427,65 @@ function setupToggles(): void {
 function setupExportControls(): void {
   dom.btnGenerate.addEventListener('click', startExport);
   dom.btnStop.addEventListener('click', stopExport);
+  
+  // Range sliders
+  if (dom.rangeStart) {
+    dom.rangeStart.addEventListener('input', updateExportRange);
+  }
+  if (dom.rangeEnd) {
+    dom.rangeEnd.addEventListener('input', updateExportRange);
+  }
+}
+
+function updateExportRange(): void {
+  if (!state.activity) return;
+  const max = state.activity.points.length - 1;
+  
+  let startIdx = parseInt(dom.rangeStart.value);
+  let endIdx = parseInt(dom.rangeEnd.value);
+  
+  // Ensure start < end
+  if (startIdx >= endIdx) {
+    startIdx = Math.max(0, endIdx - 1);
+    dom.rangeStart.value = startIdx.toString();
+  }
+  
+  state.exportStartIdx = startIdx;
+  state.exportEndIdx = endIdx;
+  
+  // Update labels
+  const startTime = state.activity.points[startIdx].elapsed;
+  const endTime = state.activity.points[endIdx].elapsed;
+  const duration = endTime - startTime;
+  
+  dom.exportRangeLabel.textContent = `${formatTimeShort(startTime)} → ${formatTimeShort(endTime)}`;
+  dom.exportDurationLabel.textContent = formatDuration(duration);
 }
 
 function startExport(): void {
   if (!state.activity || state.isExporting) return;
   
-  const format = dom.exportFormat.value;
   const res = dom.exportResolution.value.split('x').map(Number);
-  const freq = parseFloat(dom.exportFreq.value);
-  const points = parseInt(dom.exportPoints.value);
-  const fps = parseInt(dom.exportFps.value);
+  const startIdx = state.exportStartIdx;
+  const endIdx = state.exportEndIdx;
   
-  if (state.activity.points.length === 0) return;
+  if (endIdx <= startIdx) {
+    showToast('⚠️ Plage invalide');
+    return;
+  }
+  
+  // Points dans la plage
+  const exportPoints = state.activity.points.slice(startIdx, endIdx + 1);
+  
+  // Durée réelle de la plage = durée de la vidéo
+  const durationSec = exportPoints[exportPoints.length - 1].elapsed - exportPoints[0].elapsed;
+  const fps = 1; // 1 frame par seconde = durée vidéo = durée réelle
+  const totalFrames = exportPoints.length;
   
   state.isExporting = true;
   dom.btnGenerate.classList.add('hidden');
   dom.btnStop.classList.remove('hidden');
   dom.exportProgress.classList.remove('hidden');
-  
-  // Prepare export points
-  const startIdx = state.selectedPointIdx;
-  const endIdx = Math.min(startIdx + points, state.activity.points.length);
-  const exportPoints = state.activity.points.slice(startIdx, endIdx);
-  
-  // Update skin bg mode for export
-  const exportBgMode = format.includes('green') ? 'green' : state.currentSkin.config.bgMode;
-  state.currentSkin.config.bgMode = exportBgMode;
   
   const exporter = new VideoExporter(
     dom.canvas,
@@ -470,15 +503,14 @@ function startExport(): void {
       width: res[0],
       height: res[1],
       fps,
-      points: exportPoints.length,
-      freq,
-      bgMode: exportBgMode,
+      totalFrames,
+      samplesPerSec: 1,
+      bgMode: state.currentSkin.config.bgMode,
       onProgress: (pct, frame, total) => {
         dom.progressFill.style.width = `${pct}%`;
         dom.progressLabel.textContent = `${pct}% (${frame}/${total})`;
       },
       onComplete: (blob, filename) => {
-        // Download
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -490,7 +522,7 @@ function startExport(): void {
         dom.btnGenerate.classList.remove('hidden');
         dom.btnStop.classList.add('hidden');
         dom.exportProgress.classList.add('hidden');
-        showToast(`✅ Export terminé: ${filename}`);
+        showToast(`✅ Export terminé: ${filename} (${formatDuration(durationSec)})`);
       },
       onError: (err) => {
         state.isExporting = false;
