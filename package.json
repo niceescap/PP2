@@ -7,13 +7,19 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "serve": "python3 -m http.server 8080 --directory dist"
+    "serve": "python3 -m http.server 8080 --directory dist",
+    "server": "npx tsx server/render-server.ts",
+    "start-all": "npm run server & npm run dev"
   },
   "dependencies": {
+    "express": "^4.19.0",
+    "multer": "^1.4.5",
     "mp4-muxer": "^5.2.0"
   },
   "devDependencies": {
     "vite": "^5.4.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "canvas": "^2.11.2",
+    "tsx": "^4.7.0"
   }
 }
