@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>PaceParser2 · Overlay Vidéo Télémétrie Sportive</title>
+  <meta name="description" content="Générateur moderne d'overlay vidéo de télémétrie depuis FIT/GPX — export vert chroma key pour CapCut" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/styles/main.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-mark">
+          <div class="brand-dot"></div>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">Pace<span>Parser</span>2</span>
+          <span class="brand-badge">Beta</span>
+        </div>
+      </div>
+      <div class="header-status" id="headerStatus">
+        <span class="status-label">En attente d'import FIT</span>
+      </div>
+    </header>
+
+    <!-- Main Layout -->
+    <main class="main">
+      <!-- LEFT PANEL: Controls -->
+      <aside class="panel panel-left" id="panelLeft">
+        <!-- Import Section -->
+        <section class="section" id="sectionImport">
+          <h3 class="section-title">Import</h3>
+          <div class="dropzone" id="dropzone">
+            <div class="dropzone-icon">📁</div>
+            <p>Glisser-déposer un fichier FIT</p>
+            <small>ou cliquer pour sélectionner</small>
+            <input type="file" id="fileInput" accept=".fit,.FIT,.gpx,.GPX" hidden />
+          </div>
+        </section>
+
+        <!-- Stats Section (hidden until file loaded) -->
+        <section class="section hidden" id="sectionStats">
+          <h3 class="section-title">Statistiques</h3>
+          <div class="stats-grid" id="statsGrid"></div>
+        </section>
+
+        <!-- Timeline Section -->
+        <section class="section hidden" id="sectionTimeline">
+          <h3 class="section-title">Timeline</h3>
+          <div class="timeline-controls">
+            <button class="btn btn-icon" id="btnPlayPause">▶</button>
+            <input type="range" id="timelineSlider" min="0" max="100" value="0" step="1" />
+          </div>
+          <div class="range-info">
+            <span>Début: <strong id="startTime">--:--</strong></span>
+            <span>Durée: <strong id="selDuration">--:--</strong></span>
+            <span>Fin: <strong id="endTime">--:--</strong></span>
+          </div>
+        </section>
+
+        <!-- Skin Selector -->
+        <section class="section hidden" id="sectionSkin">
+          <h3 class="section-title">Skin</h3>
+          <div class="skin-grid" id="skinGrid"></div>
+        </section>
+
+        <!-- Customization -->
+        <section class="section hidden" id="sectionCustomize">
+          <h3 class="section-title">Personnalisation</h3>
+          <div class="customize-list" id="customizeList"></div>
+        </section>
+      </aside>
+
+      <!-- CENTER: Canvas Preview -->
+      <div class="preview-area">
+        <div class="preview-header">
+          <div class="preview-info">
+            <span class="badge" id="frameBadge">Frame 0 / 0</span>
+            <span class="badge badge-secondary" id="skinBadge">—</span>
+          </div>
+          <div class="preview-actions">
+            <button class="btn btn-outline" id="btnToggleMap">🗺️ Map</button>
+            <button class="btn btn-outline" id="btnToggleBg">🟩 Vert</button>
+          </div>
+        </div>
+        <div class="canvas-container" id="canvasContainer">
+          <canvas id="previewCanvas" width="1920" height="1080"></canvas>
+        </div>
+      </div>
+
+      <!-- RIGHT PANEL: Export -->
+      <aside class="panel panel-right" id="panelRight">
+        <section class="section" id="sectionExport">
+          <h3 class="section-title">Export</h3>
+          <div class="export-form">
+            <div class="form-row">
+              <label>Format</label>
+              <select id="exportFormat">
+                <option value="webm-green">WebM Vert (CapCut)</option>
+                <option value="webm-alpha">WebM Transparence</option>
+                <option value="png-sequence">PNG Sequence (ZIP)</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Résolution</label>
+              <select id="exportResolution">
+                <option value="1920x1080">1920×1080 (Full HD)</option>
+                <option value="1280x720">1280×720 (HD)</option>
+                <option value="1080x1920">1080×1920 (Vertical)</option>
+                <option value="1080x1080">1080×1080 (Carré)</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Fréquence</label>
+              <select id="exportFreq">
+                <option value="1">1 pt / seconde</option>
+                <option value="2" selected>2 pts / seconde</option>
+                <option value="0.5">1 pt / 0.5s (ralenti)</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Points</label>
+              <input type="number" id="exportPoints" value="60" min="1" max="3600" />
+            </div>
+            <div class="form-row">
+              <label>FPS</label>
+              <select id="exportFps">
+                <option value="30" selected>30 FPS</option>
+                <option value="24">24 FPS (cinéma)</option>
+                <option value="60">60 FPS (fluide)</option>
+                <option value="1">1 FPS (léger)</option>
+              </select>
+            </div>
+          </div>
+          <div class="export-actions">
+            <button class="btn btn-primary btn-large" id="btnGenerate" disabled>
+              🎬 Générer l'overlay
+            </button>
+            <button class="btn btn-danger hidden" id="btnStop">■ Stop</button>
+          </div>
+          <div class="export-progress hidden" id="exportProgress">
+            <div class="progress-bar">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <span class="progress-label" id="progressLabel">0%</span>
+          </div>
+        </section>
+
+        <!-- Countdown modal -->
+        <div class="countdown-overlay hidden" id="countdownOverlay">
+          <div class="countdown-num" id="countdownNum">3</div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
