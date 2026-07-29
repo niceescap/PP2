@@ -17,7 +17,7 @@ export interface SkinDefinition {
   description: string;
   category: string;
   class: SkinClass;
-  thumbnail: string; // CSS gradient for preview
+  thumbnail: string;
 }
 
 export const SKIN_REGISTRY: SkinDefinition[] = [
