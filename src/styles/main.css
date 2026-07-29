@@ -357,6 +357,20 @@ input[type="range"]::-webkit-slider-thumb {
   max-height: 100%;
 }
 
+/* ── Engine Info ──────────────────────────────── */
+.engine-info {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-mid);
+}
+.engine-info.engine-fast { color: var(--success); border-color: rgba(0,230,118,0.3); }
+.engine-info.engine-slow { color: var(--accent); border-color: rgba(255,214,0,0.3); }
+
 /* ── Export Form ──────────────────────────────── */
 .export-form { display: flex; flex-direction: column; gap: 12px; }
 .form-row { display: flex; flex-direction: column; gap: 6px; }
