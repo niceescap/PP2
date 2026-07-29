@@ -1,0 +1,17 @@
+{
+  "name": "paceparser2",
+  "version": "1.0.0",
+  "description": "Modern sports telemetry overlay generator for video editing",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "serve": "python3 -m http.server 8080 --directory dist"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "typescript": "^5.4.0"
+  }
+}
