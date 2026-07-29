@@ -88,7 +88,18 @@ function init(): void {
   setupExportControls();
   setupCanvasInteraction();
   updateCanvasSize();
+  detectEngine();
   showToast('PaceParser2 prêt — importez un FIT');
+}
+
+function detectEngine(): void {
+  if (isWebCodecsSupported()) {
+    dom.engineInfo.textContent = '⚡ Moteur: WebCodecs → MP4 rapide';
+    dom.engineInfo.classList.add('engine-fast');
+  } else {
+    dom.engineInfo.textContent = '🐢 Moteur: MediaRecorder → WebM temps réel';
+    dom.engineInfo.classList.add('engine-slow');
+  }
 }
 
 // ── Canvas sizing ───────────────────────────────
