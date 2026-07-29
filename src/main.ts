@@ -28,6 +28,8 @@ interface AppState {
 const state: AppState = {
   activity: null,
   config: createDefaultConfig(1920, 1080),
+  fitBuffer: null as ArrayBuffer | null,
+  fileName: '' as string,
   selectedPointIdx: 0,
   isPlaying: false,
   playTimer: null,
