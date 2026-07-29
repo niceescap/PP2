@@ -491,36 +491,11 @@ function startExport(): void {
   };
 
   // ── Choix du moteur ──────────────────────────────
-  // WebCodecs MP4 = rapide (quelques secondes), pas d'alpha → fond vert/noir
-  // MediaRecorder WebM = temps réel, supporte la transparence (fallback)
-  const useWebCodecs = isWebCodecsSupported() && state.config.bgMode !== 'transparent';
+  // WebCodecs MP4 = rapide, timeline-exacte → préféré
+  // MediaRecorder WebM = temps réel → fallback (ou si transparent)
+  const preferWebCodecs = isWebCodecsSupported() && state.config.bgMode !== 'transparent';
 
-  if (useWebCodecs) {
-    showToast('⚡ Export MP4 rapide (WebCodecs)');
-    const exporter = new WebCodecsExporter(
-      dom.canvas,
-      state.config,
-      exportPoints,
-      state.activity.points,
-      state.activity.bounds,
-      {
-        width: res[0],
-        height: res[1],
-        onProgress,
-        onComplete: (blob, filename) => {
-          download(blob, filename);
-          finishUI();
-          showToast(`✅ ${filename} (${formatDuration(durationSec)})`);
-        },
-        onError: (err) => {
-          finishUI();
-          showToast(`❌ ${err}`);
-        }
-      }
-    );
-    state.activeExporter = exporter;
-    exporter.start();
-  } else {
+  const startMediaRecorder = () => {
     showToast('🐢 Export WebM (temps réel)');
     const exporter = new VideoExporter(
       dom.canvas,
@@ -549,6 +524,43 @@ function startExport(): void {
     );
     state.activeExporter = exporter;
     exporter.start();
+  };
+
+  if (preferWebCodecs) {
+    showToast('⚡ Export MP4 rapide');
+    let fallbackDone = false;
+    const exporter = new WebCodecsExporter(
+      dom.canvas,
+      state.config,
+      exportPoints,
+      state.activity.points,
+      state.activity.bounds,
+      {
+        width: res[0],
+        height: res[1],
+        onProgress,
+        onComplete: (blob, filename) => {
+          download(blob, filename);
+          finishUI();
+          showToast(`✅ ${filename} (${formatDuration(durationSec)})`);
+        },
+        onError: (err) => {
+          if (fallbackDone) { finishUI(); showToast(`❌ ${err}`); return; }
+          fallbackDone = true;
+          console.warn('[PP2] WebCodecs failed, fallback to MediaRecorder:', err);
+          showToast(`⚠️ ${err} — bascule WebM`);
+          state.activeExporter = null;
+          startMediaRecorder();
+        }
+      }
+    );
+    state.activeExporter = exporter;
+    exporter.start();
+  } else {
+    if (state.config.bgMode === 'transparent') {
+      showToast('ℹ️ Fond transparent → WebM temps réel (pas d\'alpha en MP4)');
+    }
+    startMediaRecorder();
   }
 }
 
