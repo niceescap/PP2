@@ -449,7 +449,6 @@ function startExport(): void {
 
   const exportPoints = state.activity.points.slice(startIdx, endIdx + 1);
   const durationSec = exportPoints[exportPoints.length - 1].elapsed - exportPoints[0].elapsed;
-  const fps = 1;
   const totalFrames = exportPoints.length;
 
   state.isExporting = true;
@@ -457,49 +456,95 @@ function startExport(): void {
   dom.btnStop.classList.remove('hidden');
   dom.exportProgress.classList.remove('hidden');
 
-  const exporter = new VideoExporter(
-    dom.canvas,
-    state.config,
-    exportPoints,
-    state.activity.points,
-    state.activity.bounds,
-    {
-      width: res[0],
-      height: res[1],
-      fps,
-      totalFrames,
-      samplesPerSec: 1,
-      bgMode: state.config.bgMode,
-      onProgress: (pct, frame, total) => {
-        dom.progressFill.style.width = `${pct}%`;
-        dom.progressLabel.textContent = `${pct}% (${frame}/${total})`;
-      },
-      onComplete: (blob, filename) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-        state.isExporting = false;
-        dom.btnGenerate.classList.remove('hidden');
-        dom.btnStop.classList.add('hidden');
-        dom.exportProgress.classList.add('hidden');
-        showToast(`✅ Export: ${filename} (${formatDuration(durationSec)})`);
-      },
-      onError: (err) => {
-        state.isExporting = false;
-        dom.btnGenerate.classList.remove('hidden');
-        dom.btnStop.classList.add('hidden');
-        dom.exportProgress.classList.add('hidden');
-        showToast(`❌ Erreur: ${err}`);
+  const finishUI = () => {
+    state.isExporting = false;
+    state.activeExporter = null;
+    dom.btnGenerate.classList.remove('hidden');
+    dom.btnStop.classList.add('hidden');
+    dom.exportProgress.classList.add('hidden');
+  };
+
+  const download = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const onProgress = (pct: number, frame: number, total: number) => {
+    dom.progressFill.style.width = `${pct}%`;
+    dom.progressLabel.textContent = `${pct}% (${frame}/${total})`;
+  };
+
+  // ── Choix du moteur ──────────────────────────────
+  // WebCodecs MP4 = rapide (quelques secondes), pas d'alpha → fond vert/noir
+  // MediaRecorder WebM = temps réel, supporte la transparence (fallback)
+  const useWebCodecs = isWebCodecsSupported() && state.config.bgMode !== 'transparent';
+
+  if (useWebCodecs) {
+    showToast('⚡ Export MP4 rapide (WebCodecs)');
+    const exporter = new WebCodecsExporter(
+      dom.canvas,
+      state.config,
+      exportPoints,
+      state.activity.points,
+      state.activity.bounds,
+      {
+        width: res[0],
+        height: res[1],
+        onProgress,
+        onComplete: (blob, filename) => {
+          download(blob, filename);
+          finishUI();
+          showToast(`✅ ${filename} (${formatDuration(durationSec)})`);
+        },
+        onError: (err) => {
+          finishUI();
+          showToast(`❌ ${err}`);
+        }
       }
-    }
-  );
-  exporter.start();
+    );
+    state.activeExporter = exporter;
+    exporter.start();
+  } else {
+    showToast('🐢 Export WebM (temps réel)');
+    const exporter = new VideoExporter(
+      dom.canvas,
+      state.config,
+      exportPoints,
+      state.activity.points,
+      state.activity.bounds,
+      {
+        width: res[0],
+        height: res[1],
+        fps: 1,
+        totalFrames,
+        samplesPerSec: 1,
+        bgMode: state.config.bgMode,
+        onProgress,
+        onComplete: (blob, filename) => {
+          download(blob, filename);
+          finishUI();
+          showToast(`✅ ${filename} (${formatDuration(durationSec)})`);
+        },
+        onError: (err) => {
+          finishUI();
+          showToast(`❌ ${err}`);
+        }
+      }
+    );
+    state.activeExporter = exporter;
+    exporter.start();
+  }
 }
 
 function stopExport(): void {
+  if (state.activeExporter) {
+    state.activeExporter.stop();
+    state.activeExporter = null;
+  }
   state.isExporting = false;
   dom.btnGenerate.classList.remove('hidden');
   dom.btnStop.classList.add('hidden');
