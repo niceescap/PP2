@@ -18,6 +18,8 @@ interface AppState {
   showMap: boolean;
   bgMode: 'green' | 'transparent';
   isExporting: boolean;
+  exportStartIdx: number;
+  exportEndIdx: number;
 }
 
 const state: AppState = {
@@ -29,6 +31,8 @@ const state: AppState = {
   showMap: true,
   bgMode: 'green',
   isExporting: false,
+  exportStartIdx: 0,
+  exportEndIdx: 0,
 };
 
 // ── DOM References ──────────────────────────────
