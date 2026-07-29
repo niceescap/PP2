@@ -1,71 +1,43 @@
 # PaceParser2
 
-Modern sports telemetry overlay generator — **100% browser-native, zero server**.
+Générateur moderne d'overlay vidéo de télémétrie sportive depuis fichiers FIT/GPX.
+Export WebM avec fond vert chroma key pour CapCut.
 
-Import FIT → Preview → Skin select → Export WebM (green screen for CapCut).
-
-## Quick Start (Linux / Termux)
+## Développement
 
 ```bash
-# 1. Install Node.js (Termux)
-pkg install nodejs python git
-
-# 2. Clone & install
-git clone https://github.com/niceescap/PP2.git
-cd PP2
 npm install
-
-# 3. Dev mode (hot reload, phone-accessible)
-npm run dev
-# → open http://localhost:5173 on your phone browser
-
-# 4. OR build & serve statically
-npm run build
-python3 -m http.server 8080 --directory dist
-# → open http://localhost:8080
+npm run dev -- --port 8001
 ```
 
-## Features
+Ouvrir http://localhost:8001
 
-- **FIT binary parser** — reads Garmin/Wahoo/Bryton files directly in browser
-- **5 skins** — Cinematic Dark, Glass, Neon Racing, Minimal, Dashboard
-- **MAP live** — GPS track overlay on every skin (mercator projection)
-- **Chroma key green** — export with `#00ff66` background for CapCut/DS editing
-- **Full customization** — colors, fonts, metrics, map position — nothing frozen
-- **WebM export** — VP9/VP8 via MediaRecorder, up to 4K
+## Build production
 
-## Skin Previews
+```bash
+npm run build
+npm run serve    # sert le dossier dist sur le port 8080
+```
 
-| Skin | Vibe | Best For |
-|------|------|----------|
-| Cinematic Dark | Dark, elegant, film | YouTube, long-form |
-| Glass | Translucent, iOS-style | Instagram, modern |
-| Neon Racing | Cyberpunk, gaming | TikTok, energetic |
-| Minimal | Clean, Apple-like | Professional |
-| Dashboard | Dense, data-rich | Analysis, coaching |
+## Termux (Android)
 
-## Export Settings
+```bash
+pkg install nodejs
+npm install
+npm run dev -- --port 8001 --host 0.0.0.0
+```
 
-- **Format**: WebM (green) / WebM (transparent) / PNG sequence
-- **Resolution**: 1920×1080, 1280×720, 1080×1920 (vertical), 1080×1080
-- **FPS**: 1 (light), 24 (cinema), 30 (standard), 60 (smooth)
-- **Frequency**: 0.5s → 60s per point
+## Workflow
 
-## Tech Stack
+1. Importer un fichier FIT
+2. Les données s'affichent automatiquement
+3. Personnaliser les blocs (position, taille, couleurs) en cliquant dessus dans la liste ou en les glissant sur le canvas
+4. Choisir la plage temporelle d'export
+5. Générer → le fichier WebM se télécharge avec la durée exacte de la plage
 
-- **Vite** — dev server + static build
-- **TypeScript** — strict types, zero runtime deps
-- **Canvas 2D** — all rendering, no WebGL needed
-- **MediaRecorder API** — WebM encoding in-browser
+## Export
 
-## Roadmap
-
-- [ ] GPX parser
-- [ ] Strava API integration
-- [ ] Custom skin editor (JSON import/export)
-- [ ] Batch export
-- [ ] Audio sync marker
-
----
-
-Built with ❤️ by @lazare_sport · 2026
+- Format : WebM VP9 (ou VP8 selon le navigateur)
+- Fond : vert chroma key (#00ff66), transparent, ou noir
+- Durée : identique à la plage temporelle source (1 frame = 1 seconde)
+- Résolution : 1080p, 720p, vertical, carré
