@@ -554,6 +554,18 @@ function enableSections(): void {
   dom.btnGenerate.disabled = false;
   
   renderCustomizationPanel();
+  
+  // Initialize export range sliders
+  if (dom.rangeStart && dom.rangeEnd && state.activity) {
+    const max = state.activity.points.length - 1;
+    dom.rangeStart.max = max.toString();
+    dom.rangeEnd.max = max.toString();
+    dom.rangeStart.value = '0';
+    dom.rangeEnd.value = max.toString();
+    state.exportStartIdx = 0;
+    state.exportEndIdx = max;
+    updateExportRange();
+  }
 }
 
 // ── Utilities ───────────────────────────────────
