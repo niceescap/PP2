@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
-// Video Exporter — WebM via MediaRecorder
-// Fast render: draws frames as fast as possible
+// Video Exporter — WebM via MediaRecorder (FALLBACK)
+// Timeline-exact: 1 frame per second = video duration = data duration
 // ═══════════════════════════════════════════════════════════════
 
 import { OverlayConfig, drawOverlay } from '../blocks.js';
@@ -9,7 +9,7 @@ import { FitPoint, MapBounds } from '../fit/types.js';
 export interface ExportOptions {
   width: number;
   height: number;
-  fps: number;
+  fps: number;           // must be exactly 1 for timeline-exact
   totalFrames: number;
   samplesPerSec: number;
   bgMode: 'green' | 'transparent' | 'black';
@@ -31,7 +31,7 @@ export class VideoExporter {
   private frameIndex = 0;
   private totalFrames = 0;
   private isRunning = false;
-  private rafId: number | null = null;
+  private intervalId: number | null = null;
   private stream: MediaStream | null = null;
 
   constructor(
@@ -66,7 +66,8 @@ export class VideoExporter {
     this.canvas.width = this.options.width;
     this.canvas.height = this.options.height;
 
-    this.stream = this.canvas.captureStream(0);
+    // 1 fps stream = 1 real second per data point
+    this.stream = this.canvas.captureStream(1);
 
     const mimeTypes = [
       'video/webm;codecs=vp9',
@@ -77,7 +78,6 @@ export class VideoExporter {
     for (const mt of mimeTypes) {
       if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break; }
     }
-
     if (!mimeType) {
       this.options.onError('Aucun format vidéo supporté');
       return;
@@ -89,28 +89,26 @@ export class VideoExporter {
     });
 
     this.mediaRecorder.start(1000);
-
     this.mediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) this.chunks.push(e.data);
     };
-
     this.mediaRecorder.onstop = () => this.finishExport();
     this.mediaRecorder.onerror = (e: any) => {
       this.options.onError(`Erreur MediaRecorder: ${e.message || 'inconnue'}`);
       this.cleanup();
     };
 
-    // Render as fast as possible using requestAnimationFrame
-    this.renderLoop();
+    // EXACTLY 1 frame per second = video duration = data duration
+    const delayMs = 1000; // 1 fps = 1 second per data point
+    this.intervalId = window.setInterval(() => this.renderFrame(), delayMs);
   }
 
-  private renderLoop = (): void => {
+  private renderFrame(): void {
     if (!this.isRunning || this.frameIndex >= this.totalFrames) {
       this.stopRecording();
       return;
     }
 
-    // Draw frame
     const idx = this.frameIndex;
     const point = this.points[idx];
     const absIdx = this.allPoints.indexOf(point);
@@ -124,27 +122,20 @@ export class VideoExporter {
       this.bounds
     );
 
-    // Request stream capture
-    if (this.stream) {
-      const track = this.stream.getVideoTracks()[0];
-      if (track && 'requestFrame' in track) {
-        (track as any).requestFrame();
-      }
+    const track = this.stream?.getVideoTracks()[0];
+    if (track && 'requestFrame' in track) {
+      (track as any).requestFrame();
     }
 
-    // Progress
     const pct = Math.round((idx / this.totalFrames) * 100);
     this.options.onProgress(pct, idx, this.totalFrames);
 
     this.frameIndex++;
-
-    // Next frame immediately
-    this.rafId = requestAnimationFrame(this.renderLoop);
-  };
+  }
 
   private stopRecording(): void {
     this.isRunning = false;
-    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    if (this.intervalId) { clearInterval(this.intervalId); this.intervalId = null; }
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop();
     } else {
@@ -166,7 +157,7 @@ export class VideoExporter {
 
   stop(): void {
     this.isRunning = false;
-    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    if (this.intervalId) { clearInterval(this.intervalId); this.intervalId = null; }
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop();
     }
@@ -174,7 +165,7 @@ export class VideoExporter {
 
   private cleanup(): void {
     this.isRunning = false;
-    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    if (this.intervalId) { clearInterval(this.intervalId); this.intervalId = null; }
     if (this.stream) {
       this.stream.getTracks().forEach(t => t.stop());
       this.stream = null;
