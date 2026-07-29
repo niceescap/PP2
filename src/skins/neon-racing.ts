@@ -11,7 +11,7 @@ const NEON_DEFAULTS: Partial<SkinConfig> = {
   bgMode: 'green',
   bgColor: '#00ff66',
   primaryColor: '#00ff88',
-  secondaryError: '#ff006e',
+  secondaryColor: '#ff006e',
   accentColor: '#00ff88',
   textColor: '#00ff88',
   gaugeBgColor: 'rgba(0,255,136,0.10)',
@@ -22,7 +22,6 @@ const NEON_DEFAULTS: Partial<SkinConfig> = {
   mapBgColor: 'rgba(0,0,0,0.6)',
   mapTrackColor: '#00ff88',
   mapCurrentColor: '#ff006e',
-  secondaryColor: '#ff006e'
 };
 
 export class NeonRacing implements ISkin {
@@ -34,7 +33,6 @@ export class NeonRacing implements ISkin {
   config: SkinConfig;
   
   constructor(config?: Partial<SkinConfig>) {
-    const { DEFAULT_CONFIG } = {} as any;
     this.config = { ...DEFAULT_CONFIG, ...NEON_DEFAULTS, ...config } as SkinConfig;
   }
   
@@ -73,7 +71,6 @@ export class NeonRacing implements ISkin {
     } else if (c.bgMode === 'black') {
       ctx.fillStyle = '#050505';
       ctx.fillRect(0, 0, W, H);
-      // Grid lines
       ctx.strokeStyle = 'rgba(0,255,136,0.08)';
       ctx.lineWidth = 1;
       for (let gx = 0; gx < W; gx += 48) {
@@ -84,22 +81,18 @@ export class NeonRacing implements ISkin {
       }
     }
     
-    // Glow effect for text
     ctx.shadowColor = c.primaryColor;
     ctx.shadowBlur = 20;
     
-    // Power centered
     const pcx = W * 0.5;
     const pcy = H * 0.45;
     
-    // Neon circle background
     ctx.beginPath();
     ctx.arc(pcx, pcy, c.fontSizePower * 0.8, 0, Math.PI * 2);
     ctx.strokeStyle = c.gaugeBgColor;
     ctx.lineWidth = 3;
     ctx.stroke();
     
-    // Neon arc fill
     if (meta.maxPower > 0 && point.power > 0) {
       const ratio = Math.min(1, point.power / meta.maxPower);
       ctx.beginPath();
@@ -110,7 +103,6 @@ export class NeonRacing implements ISkin {
       ctx.stroke();
     }
     
-    // Power number
     ctx.font = `800 ${c.fontSizePower}px ${c.fontFamily}`;
     ctx.fillStyle = c.primaryColor;
     ctx.textAlign = 'center';
@@ -119,12 +111,10 @@ export class NeonRacing implements ISkin {
     
     ctx.shadowBlur = 0;
     
-    // WATTS label
     ctx.font = `600 ${c.fontSizePower * 0.18}px ${c.fontFamily}`;
     ctx.fillStyle = c.secondaryColor;
     ctx.fillText('W', pcx, pcy + c.fontSizePower * 0.5);
     
-    // Metrics row — bottom
     const my = H * 0.78;
     const metrics: Array<{ v: string; l: string }> = [];
     if (c.showSpeed) metrics.push({ v: `${point.speed.toFixed(1)}`, l: 'KM/H' });
@@ -147,7 +137,6 @@ export class NeonRacing implements ISkin {
       ctx.fillText(m.l, mx, my + c.fontSizeMetrics * 0.7);
     });
     
-    // Time top-left
     if (c.showTime) {
       const m = Math.floor(meta.elapsed / 60);
       const s = Math.floor(meta.elapsed % 60);
@@ -160,7 +149,6 @@ export class NeonRacing implements ISkin {
       ctx.shadowBlur = 0;
     }
     
-    // Map
     if (c.showMap && bounds) {
       this.drawMap(ctx, W, H, point, allPoints, currentIndex, bounds);
     }
@@ -180,7 +168,6 @@ export class NeonRacing implements ISkin {
     const mx = W - mapW - 24;
     const my = H - mapH - 24;
     
-    // Dark rounded panel
     ctx.fillStyle = c.mapBgColor;
     ctx.beginPath();
     ctx.roundRect(mx, my, mapW, mapH, 8);
@@ -202,7 +189,6 @@ export class NeonRacing implements ISkin {
       y: offY + (bounds.maxLat - lat) * scale
     });
     
-    // Track dim
     ctx.beginPath();
     ctx.strokeStyle = 'rgba(255,255,255,0.15)';
     ctx.lineWidth = 2;
@@ -215,7 +201,6 @@ export class NeonRacing implements ISkin {
     }
     ctx.stroke();
     
-    // Neon completed track
     ctx.shadowColor = c.mapTrackColor;
     ctx.shadowBlur = 8;
     ctx.beginPath();
@@ -233,7 +218,6 @@ export class NeonRacing implements ISkin {
     ctx.stroke();
     ctx.shadowBlur = 0;
     
-    // Pink neon current dot
     if (point.lat !== null && point.lon !== null) {
       const pt = project(point.lat, point.lon);
       ctx.shadowColor = c.mapCurrentColor;
