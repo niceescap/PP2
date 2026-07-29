@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>PaceParser2 · Overlay Vidéo Télémétrie Sportive</title>
-  <meta name="description" content="Générateur moderne d'overlay vidéo de télémétrie depuis FIT/GPX — export vert chroma key pour CapCut" />
+  <title>PaceParser2 · Overlay Vidéo Télémétrie</title>
+  <meta name="description" content="Générateur moderne d'overlay vidéo de télémétrie depuis FIT — export vert chroma key pour CapCut" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/src/styles/main.css" />
 </head>
 <body>
@@ -32,7 +32,7 @@
     <main class="main">
       <!-- LEFT PANEL: Controls -->
       <aside class="panel panel-left" id="panelLeft">
-        <!-- Import Section -->
+        <!-- Import -->
         <section class="section" id="sectionImport">
           <h3 class="section-title">Import</h3>
           <div class="dropzone" id="dropzone">
@@ -43,13 +43,13 @@
           </div>
         </section>
 
-        <!-- Stats Section (hidden until file loaded) -->
+        <!-- Stats -->
         <section class="section hidden" id="sectionStats">
           <h3 class="section-title">Statistiques</h3>
           <div class="stats-grid" id="statsGrid"></div>
         </section>
 
-        <!-- Timeline Section -->
+        <!-- Timeline -->
         <section class="section hidden" id="sectionTimeline">
           <h3 class="section-title">Timeline</h3>
           <div class="timeline-controls">
@@ -63,16 +63,11 @@
           </div>
         </section>
 
-        <!-- Skin Selector -->
-        <section class="section hidden" id="sectionSkin">
-          <h3 class="section-title">Skin</h3>
-          <div class="skin-grid" id="skinGrid"></div>
-        </section>
-
-        <!-- Customization -->
-        <section class="section hidden" id="sectionCustomize">
-          <h3 class="section-title">Personnalisation</h3>
-          <div class="customize-list" id="customizeList"></div>
+        <!-- Blocks customization -->
+        <section class="section hidden" id="sectionBlocks">
+          <h3 class="section-title">Blocs de données</h3>
+          <p class="section-hint">Cliquez pour éditer · Glissez sur le canvas pour déplacer</p>
+          <div class="blocks-list" id="blocksList"></div>
         </section>
       </aside>
 
@@ -81,10 +76,8 @@
         <div class="preview-header">
           <div class="preview-info">
             <span class="badge" id="frameBadge">Frame 0 / 0</span>
-            <span class="badge badge-secondary" id="skinBadge">—</span>
           </div>
           <div class="preview-actions">
-            <button class="btn btn-outline" id="btnToggleMap">🗺️ Map</button>
             <button class="btn btn-outline" id="btnToggleBg">🟩 Vert</button>
           </div>
         </div>
@@ -132,11 +125,6 @@
             <span class="progress-label" id="progressLabel">0%</span>
           </div>
         </section>
-
-        <!-- Countdown modal -->
-        <div class="countdown-overlay hidden" id="countdownOverlay">
-          <div class="countdown-num" id="countdownNum">3</div>
-        </div>
       </aside>
     </main>
 
