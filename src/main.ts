@@ -78,6 +78,7 @@ const dom = {
   toast: document.getElementById('toast') as HTMLElement,
 
   btnToggleBg: document.getElementById('btnToggleBg') as HTMLButtonElement,
+  engineInfo: document.getElementById('engineInfo') as HTMLElement,
 };
 
 // ── Init ────────────────────────────────────────
