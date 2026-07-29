@@ -32,7 +32,8 @@ export class VideoExporter {
   private frameIndex = 0;
   private totalFrames = 0;
   private isRunning = false;
-  private timer: number | null = null;
+  private intervalId: number | null = null;
+  private stream: MediaStream | null = null;
   
   constructor(
     canvas: HTMLCanvasElement,
@@ -64,8 +65,8 @@ export class VideoExporter {
     this.canvas.width = this.options.width;
     this.canvas.height = this.options.height;
     
-    // Capture stream
-    const stream = this.canvas.captureStream(0); // 0 = variable fps, we control timing
+    // Capture stream ONCE
+    this.stream = this.canvas.captureStream(0);
     
     // Try different MIME types for best compatibility
     const mimeTypes = [
@@ -87,10 +88,13 @@ export class VideoExporter {
       return;
     }
     
-    this.mediaRecorder = new MediaRecorder(stream, {
+    this.mediaRecorder = new MediaRecorder(this.stream, {
       mimeType,
       videoBitsPerSecond: 8000000
     });
+    
+    // timeslice = 1000ms → data emitted every second, prevents empty blob
+    this.mediaRecorder.start(1000);
     
     this.mediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
@@ -107,13 +111,12 @@ export class VideoExporter {
       this.cleanup();
     };
     
-    this.mediaRecorder.start();
-    
-    // Start rendering frames
-    this.renderFrame();
+    // Stable interval-based timing
+    const delay = Math.max(33, 1000 / Math.max(1, this.options.fps));
+    this.intervalId = window.setInterval(() => this.renderFrame(), delay);
   }
   
-  private renderFrame = (): void => {
+  private renderFrame(): void {
     if (!this.isRunning || this.frameIndex >= this.totalFrames) {
       this.stopRecording();
       return;
@@ -138,10 +141,12 @@ export class VideoExporter {
       }
     );
     
-    // Request a frame capture from the stream
-    const track = this.canvas.captureStream(0).getVideoTracks()[0];
-    if (track && 'requestFrame' in track) {
-      (track as any).requestFrame();
+    // Request frame capture on the ORIGINAL stream track
+    if (this.stream) {
+      const track = this.stream.getVideoTracks()[0];
+      if (track && 'requestFrame' in track) {
+        (track as any).requestFrame();
+      }
     }
     
     // Progress
@@ -149,16 +154,14 @@ export class VideoExporter {
     this.options.onProgress(pct, idx, this.totalFrames);
     
     this.frameIndex++;
-    
-    // Schedule next frame (render faster than real-time for encoding)
-    const delay = this.options.fps > 0 ? 1000 / this.options.fps : 1000;
-    this.timer = requestAnimationFrame(() => {
-      // Throttle to target fps
-      setTimeout(this.renderFrame, Math.max(0, delay - 16));
-    }) as unknown as number;
-  };
+  }
   
   private stopRecording(): void {
+    this.isRunning = false;
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop();
     } else {
@@ -181,10 +184,9 @@ export class VideoExporter {
   
   stop(): void {
     this.isRunning = false;
-    if (this.timer) {
-      clearTimeout(this.timer);
-      cancelAnimationFrame(this.timer);
-      this.timer = null;
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
     }
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop();
@@ -193,10 +195,14 @@ export class VideoExporter {
   
   private cleanup(): void {
     this.isRunning = false;
-    if (this.timer) {
-      clearTimeout(this.timer);
-      cancelAnimationFrame(this.timer);
-      this.timer = null;
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    // Stop all stream tracks
+    if (this.stream) {
+      this.stream.getTracks().forEach(t => t.stop());
+      this.stream = null;
     }
     this.mediaRecorder = null;
     this.chunks = [];
