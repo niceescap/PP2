@@ -52,8 +52,7 @@ export class CinematicDark implements ISkin {
   
   draw(
     ctx: CanvasRenderingContext2D,
-    W: number,
-    H: number,
+    W: number, H: number,
     point: FitPoint,
     allPoints: FitPoint[],
     currentIndex: number,
@@ -62,39 +61,7 @@ export class CinematicDark implements ISkin {
   ): void {
     const c = this.config;
     
-    // ── Background ─────────────────────────────
-    this.drawBackground(ctx, W, H);
-    
-    // ── Main Content ───────────────────────────
-    const padX = W * 0.06;
-    const padY = H * 0.06;
-    const contentW = W - padX * 2;
-    const contentH = H - padY * 2;
-    
-    // Power — center stage
-    if (c.showPower) {
-      this.drawPower(ctx, point.power, meta.avgPower, meta.maxPower, W * 0.5, H * 0.42, c.fontSizePower);
-    }
-    
-    // Metrics row — bottom
-    this.drawMetricsRow(ctx, point, meta, padX, H * 0.72, contentW, c.fontSizeMetrics);
-    
-    // Time elapsed — top right
-    if (c.showTime) {
-      this.drawTime(ctx, meta.elapsed, W - padX, padY + 20);
-    }
-    
-    // Map overlay
-    if (c.showMap && bounds) {
-      this.drawMap(ctx, W, H, point, allPoints, currentIndex, bounds);
-    }
-    
-    // ── Vignette ───────────────────────────────
-    this.drawVignette(ctx, W, H);
-  }
-  
-  private drawBackground(ctx: CanvasRenderingContext2D, W: number, H: number): void {
-    const c = this.config;
+    // Background
     if (c.bgMode === 'green') {
       ctx.fillStyle = c.bgColor;
       ctx.fillRect(0, 0, W, H);
@@ -102,20 +69,42 @@ export class CinematicDark implements ISkin {
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, W, H);
     }
-    // transparent = nothing drawn
+    
+    const padX = W * 0.06;
+    const padY = H * 0.06;
+    const contentW = W - padX * 2;
+    const contentH = H - padY * 2;
+    
+    // Power center
+    if (c.showPower) {
+      this.drawPower(ctx, point.power, meta.avgPower, meta.maxPower, W * 0.5, H * 0.42, c.fontSizePower);
+    }
+    
+    // Metrics row
+    this.drawMetricsRow(ctx, point, meta, padX, H * 0.72, contentW, c.fontSizeMetrics);
+    
+    // Time
+    if (c.showTime) {
+      this.drawTime(ctx, meta.elapsed, W - padX, padY + 20);
+    }
+    
+    // Map
+    if (c.showMap && bounds) {
+      this.drawMap(ctx, W, H, point, allPoints, currentIndex, bounds);
+    }
+    
+    // Vignette on black
+    if (c.bgMode === 'black') {
+      this.drawVignette(ctx, W, H);
+    }
   }
   
   private drawPower(
     ctx: CanvasRenderingContext2D,
-    power: number,
-    avgPower: number,
-    maxPower: number,
-    cx: number, cy: number,
-    fontSize: number
+    power: number, avgPower: number, maxPower: number,
+    cx: number, cy: number, fontSize: number
   ): void {
     const c = this.config;
-    
-    // Gauge arc background
     const radius = fontSize * 0.9;
     const startAngle = 0.75 * Math.PI;
     const endAngle = 2.25 * Math.PI;
@@ -127,31 +116,25 @@ export class CinematicDark implements ISkin {
     ctx.lineCap = 'round';
     ctx.stroke();
     
-    // Gauge arc fill
     if (maxPower > 0 && power > 0) {
       const ratio = Math.min(1, power / maxPower);
       const fillEnd = startAngle + ratio * 1.5 * Math.PI;
       ctx.beginPath();
       ctx.arc(cx, cy, radius, startAngle, fillEnd);
       ctx.strokeStyle = c.gaugeFillColor;
-      ctx.lineWidth = 6;
-      ctx.lineCap = 'round';
       ctx.stroke();
     }
     
-    // Power value
     ctx.font = `700 ${fontSize}px ${c.fontFamily}`;
     ctx.fillStyle = c.primaryColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(Math.round(power).toString(), cx, cy - fontSize * 0.05);
     
-    // Unit
     ctx.font = `500 ${fontSize * 0.22}px ${c.fontFamily}`;
     ctx.fillStyle = c.secondaryColor;
     ctx.fillText('WATTS', cx, cy + fontSize * 0.32);
     
-    // Avg indicator
     if (avgPower > 0) {
       ctx.font = `400 ${fontSize * 0.14}px ${c.fontFamily}`;
       ctx.fillStyle = c.accentColor;
@@ -163,8 +146,7 @@ export class CinematicDark implements ISkin {
     ctx: CanvasRenderingContext2D,
     point: FitPoint,
     meta: { maxSpeed: number; maxHr: number },
-    x: number, y: number, width: number,
-    fontSize: number
+    x: number, y: number, width: number, fontSize: number
   ): void {
     const c = this.config;
     const metrics: Array<{ label: string; value: string; color: string }> = [];
@@ -178,18 +160,13 @@ export class CinematicDark implements ISkin {
     if (metrics.length === 0) return;
     
     const colW = width / metrics.length;
-    
     metrics.forEach((m, i) => {
       const mx = x + colW * i + colW / 2;
-      
-      // Value
       ctx.font = `700 ${fontSize}px ${c.fontFamily}`;
       ctx.fillStyle = m.color;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(m.value, mx, y);
-      
-      // Label
       ctx.font = `500 ${fontSize * 0.35}px ${c.fontFamily}`;
       ctx.fillStyle = c.secondaryColor;
       ctx.fillText(m.label, mx, y + fontSize * 0.65);
@@ -221,8 +198,6 @@ export class CinematicDark implements ISkin {
     bounds: MapBounds
   ): void {
     const c = this.config;
-    
-    // Calculate map area
     const mapW = W * (c.mapWidth / 100);
     const mapH = H * (c.mapHeight / 100);
     const pad = 24;
@@ -236,20 +211,25 @@ export class CinematicDark implements ISkin {
       default: mx = W - mapW - pad; my = H - mapH - pad;
     }
     
-    // Map background
     ctx.save();
     ctx.globalAlpha = c.mapOpacity;
     ctx.fillStyle = c.mapBgColor;
     ctx.beginPath();
-    ctx.roundRect(mx, my, mapW, mapH, 8);
+    if ((ctx as any).roundRect) {
+      (ctx as any).roundRect(mx, my, mapW, mapH, 8);
+    } else {
+      ctx.rect(mx, my, mapW, mapH);
+    }
     ctx.fill();
     
-    // Clip to map area
     ctx.beginPath();
-    ctx.roundRect(mx, my, mapW, mapH, 8);
+    if ((ctx as any).roundRect) {
+      (ctx as any).roundRect(mx, my, mapW, mapH, 8);
+    } else {
+      ctx.rect(mx, my, mapW, mapH);
+    }
     ctx.clip();
     
-    // Project coordinates
     const latSpan = bounds.maxLat - bounds.minLat || 0.001;
     const lonSpan = bounds.maxLon - bounds.minLon || 0.001;
     const scale = Math.min((mapW - 16) / lonSpan, (mapH - 16) / latSpan);
@@ -261,7 +241,7 @@ export class CinematicDark implements ISkin {
       y: offY + (bounds.maxLat - lat) * scale
     });
     
-    // Full track (dim)
+    // Full track dim
     ctx.beginPath();
     ctx.strokeStyle = 'rgba(255,255,255,0.2)';
     ctx.lineWidth = c.mapTrackWidth * 0.6;
@@ -274,7 +254,7 @@ export class CinematicDark implements ISkin {
     }
     ctx.stroke();
     
-    // Completed track (bright)
+    // Completed track
     ctx.beginPath();
     ctx.strokeStyle = c.mapTrackColor;
     ctx.lineWidth = c.mapTrackWidth;
@@ -290,7 +270,7 @@ export class CinematicDark implements ISkin {
     }
     ctx.stroke();
     
-    // Current position dot
+    // Current dot
     if (point.lat !== null && point.lon !== null) {
       const pt = project(point.lat, point.lon);
       ctx.beginPath();
@@ -308,7 +288,6 @@ export class CinematicDark implements ISkin {
   }
   
   private drawVignette(ctx: CanvasRenderingContext2D, W: number, H: number): void {
-    if (this.config.bgMode !== 'black') return;
     const gradient = ctx.createRadialGradient(W/2, H/2, W*0.3, W/2, H/2, W*0.7);
     gradient.addColorStop(0, 'rgba(0,0,0,0)');
     gradient.addColorStop(1, 'rgba(0,0,0,0.4)');
