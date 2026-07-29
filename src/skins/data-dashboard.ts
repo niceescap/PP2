@@ -22,7 +22,6 @@ const DASH_DEFAULTS: Partial<SkinConfig> = {
   mapBgColor: 'rgba(13,17,23,0.7)',
   mapTrackColor: '#58a6ff',
   mapCurrentColor: '#f0f6fc',
-  secondaryColor: '#8b949e',
 };
 
 export class DataDashboard implements ISkin {
