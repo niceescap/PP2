@@ -62,14 +62,14 @@ const dom = {
   // Export
   btnGenerate: document.getElementById('btnGenerate') as HTMLButtonElement,
   btnStop: document.getElementById('btnStop') as HTMLButtonElement,
-  exportFormat: document.getElementById('exportFormat') as HTMLSelectElement,
   exportResolution: document.getElementById('exportResolution') as HTMLSelectElement,
-  exportFreq: document.getElementById('exportFreq') as HTMLSelectElement,
-  exportPoints: document.getElementById('exportPoints') as HTMLInputElement,
-  exportFps: document.getElementById('exportFps') as HTMLSelectElement,
+  exportRangeLabel: document.getElementById('exportRangeLabel') as HTMLElement,
+  exportDurationLabel: document.getElementById('exportDurationLabel') as HTMLElement,
   exportProgress: document.getElementById('exportProgress') as HTMLElement,
   progressFill: document.getElementById('progressFill') as HTMLElement,
   progressLabel: document.getElementById('progressLabel') as HTMLElement,
+  rangeStart: document.getElementById('rangeStart') as HTMLInputElement,
+  rangeEnd: document.getElementById('rangeEnd') as HTMLInputElement,
   
   // Display
   headerStatus: document.getElementById('headerStatus') as HTMLElement,
