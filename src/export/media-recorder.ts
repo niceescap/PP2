@@ -1,24 +1,18 @@
 // ═══════════════════════════════════════════════════════════════
 // Video Exporter — WebM via MediaRecorder
-// Chroma key green · Timeline-perfect export
-// ═══════════════════════════════════════════════════════════════
-//
-// Règle : la vidéo overlay a la MÊME DURÉE que l'activité source.
-// frames = durée en secondes × fréquence
-// fps = fréquence
-// → aucun ajustement de vitesse nécessaire dans CapCut
+// Fast render: draws frames as fast as possible
 // ═══════════════════════════════════════════════════════════════
 
-import { ISkin } from '../skins/types.js';
+import { OverlayConfig, drawOverlay } from '../blocks.js';
 import { FitPoint, MapBounds } from '../fit/types.js';
 
 export interface ExportOptions {
   width: number;
   height: number;
-  fps: number;           // = samplesPerSec
-  totalFrames: number;   // = durationSec * fps
-  samplesPerSec: number; // 1 Hz par défaut
-  bgMode: 'green' | 'transparent';
+  fps: number;
+  totalFrames: number;
+  samplesPerSec: number;
+  bgMode: 'green' | 'transparent' | 'black';
   onProgress: (pct: number, frame: number, total: number) => void;
   onComplete: (blob: Blob, filename: string) => void;
   onError: (err: string) => void;
@@ -27,36 +21,33 @@ export interface ExportOptions {
 export class VideoExporter {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
-  private skin: ISkin;
+  private config: OverlayConfig;
   private points: FitPoint[];
   private allPoints: FitPoint[];
   private bounds: MapBounds | null;
-  private meta: { maxPower: number; maxSpeed: number; maxHr: number; avgPower: number };
   private options: ExportOptions;
   private mediaRecorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
   private frameIndex = 0;
   private totalFrames = 0;
   private isRunning = false;
-  private intervalId: number | null = null;
+  private rafId: number | null = null;
   private stream: MediaStream | null = null;
 
   constructor(
     canvas: HTMLCanvasElement,
-    skin: ISkin,
+    config: OverlayConfig,
     points: FitPoint[],
     allPoints: FitPoint[],
     bounds: MapBounds | null,
-    meta: { maxPower: number; maxSpeed: number; maxHr: number; avgPower: number },
     options: ExportOptions
   ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: true })!;
-    this.skin = skin;
+    this.config = config;
     this.points = points;
     this.allPoints = allPoints;
     this.bounds = bounds;
-    this.meta = meta;
     this.options = options;
   }
 
@@ -72,14 +63,11 @@ export class VideoExporter {
       return;
     }
 
-    // Set canvas size
     this.canvas.width = this.options.width;
     this.canvas.height = this.options.height;
 
-    // Capture stream ONCE
     this.stream = this.canvas.captureStream(0);
 
-    // Pick best MIME type
     const mimeTypes = [
       'video/webm;codecs=vp9',
       'video/webm;codecs=vp8',
@@ -87,14 +75,11 @@ export class VideoExporter {
     ];
     let mimeType = '';
     for (const mt of mimeTypes) {
-      if (MediaRecorder.isTypeSupported(mt)) {
-        mimeType = mt;
-        break;
-      }
+      if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break; }
     }
 
     if (!mimeType) {
-      this.options.onError('Aucun format vidéo supporté par le navigateur');
+      this.options.onError('Aucun format vidéo supporté');
       return;
     }
 
@@ -103,55 +88,43 @@ export class VideoExporter {
       videoBitsPerSecond: 8_000_000,
     });
 
-    // timeslice 1s → data emitted regularly
     this.mediaRecorder.start(1000);
 
     this.mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        this.chunks.push(e.data);
-      }
+      if (e.data && e.data.size > 0) this.chunks.push(e.data);
     };
 
-    this.mediaRecorder.onstop = () => {
-      this.finishExport();
-    };
-
+    this.mediaRecorder.onstop = () => this.finishExport();
     this.mediaRecorder.onerror = (e: any) => {
       this.options.onError(`Erreur MediaRecorder: ${e.message || 'inconnue'}`);
       this.cleanup();
     };
 
-    // Render at stable interval — each tick = 1 frame = samplesPerSec secondes de données
-    const delayMs = 1000 / this.options.fps;
-    this.intervalId = window.setInterval(() => this.renderFrame(), delayMs);
+    // Render as fast as possible using requestAnimationFrame
+    this.renderLoop();
   }
 
-  private renderFrame(): void {
+  private renderLoop = (): void => {
     if (!this.isRunning || this.frameIndex >= this.totalFrames) {
       this.stopRecording();
       return;
     }
 
+    // Draw frame
     const idx = this.frameIndex;
     const point = this.points[idx];
     const absIdx = this.allPoints.indexOf(point);
 
-    // Draw skin
-    this.skin.draw(
+    drawOverlay(
       this.ctx,
-      this.options.width,
-      this.options.height,
+      this.config,
       point,
       this.allPoints,
       absIdx >= 0 ? absIdx : idx,
-      this.bounds,
-      {
-        ...this.meta,
-        elapsed: point.elapsed,
-      }
+      this.bounds
     );
 
-    // Ask the stream track to capture this frame
+    // Request stream capture
     if (this.stream) {
       const track = this.stream.getVideoTracks()[0];
       if (track && 'requestFrame' in track) {
@@ -164,14 +137,14 @@ export class VideoExporter {
     this.options.onProgress(pct, idx, this.totalFrames);
 
     this.frameIndex++;
-  }
+
+    // Next frame immediately
+    this.rafId = requestAnimationFrame(this.renderLoop);
+  };
 
   private stopRecording(): void {
     this.isRunning = false;
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
+    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop();
     } else {
@@ -193,10 +166,7 @@ export class VideoExporter {
 
   stop(): void {
     this.isRunning = false;
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
+    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop();
     }
@@ -204,10 +174,7 @@ export class VideoExporter {
 
   private cleanup(): void {
     this.isRunning = false;
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
+    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
     if (this.stream) {
       this.stream.getTracks().forEach(t => t.stop());
       this.stream = null;
