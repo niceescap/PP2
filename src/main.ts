@@ -148,6 +148,8 @@ function loadFile(file: File): void {
         return;
       }
       state.activity = activity;
+      state.fitBuffer = buffer;
+      state.fileName = file.name;
       state.selectedPointIdx = 0;
       state.config = createDefaultConfig(state.config.width, state.config.height);
 
