@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { FitPoint, MapBounds } from '../fit/types.js';
-import { ISkin, SkinConfig, CustomizableField } from './types.js';
+import { ISkin, SkinConfig, DEFAULT_CONFIG, CustomizableField } from './types.js';
 
 const APPLE_DEFAULTS: Partial<SkinConfig> = {
   bgMode: 'green',
