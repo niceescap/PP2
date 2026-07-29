@@ -442,6 +442,30 @@ input[type="range"]::-moz-range-thumb {
 ::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
+/* ── Export Range Sliders ──────────────────────── */
+.range-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.range-sliders input[type="range"] {
+  width: 100%;
+  accent-color: var(--primary);
+}
+.range-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-mid);
+  font-family: var(--font-mono);
+}
+.range-summary .badge {
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
 /* ── Responsive ────────────────────────────────── */
 @media (max-width: 900px) {
   .panel-left { width: 220px; }
