@@ -5,7 +5,7 @@
 
 import { parseFIT, FitActivity } from './fit/index.js';
 import { OverlayConfig, Block, createDefaultConfig, drawOverlay } from './blocks.js';
-import { VideoExporter, ExportOptions } from './export/index.js';
+import { VideoExporter, WebCodecsExporter, isWebCodecsSupported } from './export/index.js';
 
 // ── State ───────────────────────────────────────
 interface AppState {
