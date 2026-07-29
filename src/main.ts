@@ -22,6 +22,7 @@ interface AppState {
   isResizing: boolean;
   dragOffsetX: number;
   dragOffsetY: number;
+  activeExporter: VideoExporter | WebCodecsExporter | null;
 }
 
 const state: AppState = {
