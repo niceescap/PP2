@@ -39,6 +39,7 @@ const state: AppState = {
   isResizing: false,
   dragOffsetX: 0,
   dragOffsetY: 0,
+  activeExporter: null,
 };
 
 // ── DOM ─────────────────────────────────────────
