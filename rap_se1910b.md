@@ -28,13 +28,14 @@ code mort, où l'export produisait des frames dupliquées et ignorait la résolu
 | Parseur FIT sur en-tête valide | rejetait les fichiers réels | **valide** |
 | D+ total affiché | surestimé (cumul cumulé) | **correct** |
 | Import GPX | annoncé, inexistant | **fonctionnel** |
-| `npm run server` | ne démarrait pas | **code corrigé, non exécuté** (voir §11.1) |
+| `npm run server` | ne démarrait pas | **démarre et rend un MP4** (voir §4) |
 | Export 720p / vertical | blocs débordants | **mis à l'échelle** |
 | Export MediaRecorder | frames dupliquées, 1re seconde vide | **1 frame/s exacte** |
+| Export MP4 (WebCodecs) | toujours dégradé en WebM | **MP4 H.264 30 fps** |
 
-**Verdict** — Les 7 recommandations sont appliquées et vérifiées, à l'exception de l'exécution
-réelle du serveur de rendu et du chemin d'encodage H.264, bloqués par l'environnement (détail en §11).
-Ces deux points sont documentés explicitement plutôt que présentés comme acquis.
+**Verdict** — Les 7 recommandations sont appliquées et vérifiées. Les deux points qui avaient
+été signalés comme non vérifiés — exécution du serveur de rendu et encodage H.264 — l'ont été en
+cours de travail, et ont révélé des bugs réels supplémentaires (§4.3 et §7.4).
 
 ---
 
@@ -128,8 +129,54 @@ artefacts en cas de crash.
 **Vérification.** Inspection du code compilé : `execSync` absent, `spawn(` présent, aucune
 construction de commande shell, import depuis `src/timeline.js` confirmé.
 
-**Portée réelle.** Ces corrections ont été validées par compilation et par lecture du flux
-d'exécution ; le serveur n'a **pas** été démarré (voir §11.1).
+### 4.3 Exécution réelle
+
+Le serveur a été **installé et démarré** (`npm run server` → `[PP2] Render server ready`), puis
+sollicité par des requêtes HTTP réelles :
+
+| Requête | Réponse | Attendu |
+|---|---|---|
+| POST FIT valide, plage 0→5, 1280×720 | `200`, MP4 de 43 356 octets | 200 + MP4 |
+| POST FIT valide, plage 0→5, 1920×1080 | `200`, MP4 de 43 731 octets | 200 + MP4 |
+| POST FIT invalide (signature absente) | `400` `{"error":"Taille d'en-tête FIT invalide (7)"}` | 400 explicite |
+| POST résolution `[abc]` | `400` | 400 explicite |
+| POST `range` non JSON | `400` | 400 explicite |
+| POST sans fichier | `400` | 400 explicite |
+| POST upload de 40 Mo (limite 32 Mo) | `413` | 413 |
+| POST champ `autre` au lieu de `fit` | `400` | 400 explicite |
+| OPTIONS origine `https://evil.example` | aucun en-tête CORS | origine refusée |
+| OPTIONS origine `http://localhost:8001` | `Access-Control-Allow-Origin: http://localhost:8001` | origine locale acceptée |
+
+Le MP4 produit a été décode et contrôlé :
+
+```
+codec_name=h264   width=1280   height=720   nb_frames=6   duration=6.000000
+pts_time : 0.000000  1.000000  2.000000  3.000000  4.000000  5.000000
+```
+
+H.264, 6 frames pour une plage de 6 points, une frame par seconde exactement, durée 6,000 s :
+la garantie de synchronisation announced dans le README tient aussi pour le serveur. Après le
+téléchargement, `/tmp` ne contenait plus aucun artefact `pp2-frames-*`, `pp2-output-*` ou
+`pp2-uploads/*` : le nettoyage est effectif.
+
+**Bugs révélés par cette exécution réelle** — invisibles à la seule lecture du code :
+
+| Bug | Impact | Correction |
+|---|---|---|
+| `canvas.toBuffer('png')` renvoie `undefined` en node-canvas 3.x | Les frames PNG écrites étaient **vides**, le MP4 produit était illisible | `toBuffer('image/png')` — le MIME complet est exigé par l'API v3 |
+| `canvas` 2.11.2 (2020) n'a pas de binaire pour l'ABI Node 24 | Le serveur ne pouvait pas démarrer | Passage à `canvas` 3.2.3, basé sur N-API : un binaire précompilé couvre Node 24 sans recompilation |
+| Les erreurs multer (`LIMIT_FILE_SIZE`) tombaient en 500 | Un upload trop gros renvoyait une erreur serveur au lieu d'un 413 explicite | Middleware d'erreur dédié, qui mappe `LIMIT_FILE_SIZE` → 413, `LIMIT_UNEXPECTED_FILE` → 400, `LIMIT_FILE_COUNT` → 400 |
+| Les erreurs de requête (FIT invalide, JSON malformé) tombaient en 500 | Un fichier corrompu renvoyait une erreur serveur | Classe `BadRequestError` : les erreurs de requête répondent 400, les erreurs internes 500 |
+| `multer` 1.4.4 est affecté par le CVE-2022-24434 | Faille de sécurité sur le serveur exposé | Passage à `multer` 2.4.0, branche 2.x sans vulnérabilité connue |
+
+**Refactoring pour la testabilité.** Le serveur a été restructuré en `createApp(options)` exporté,
+avec l'écoute séparée dans `startServer()`. Le fichier ne démarre le serveur que lorsqu'il est
+exécuté directement, ce qui permet à la suite de tests de piloter l'application sans occuper un
+port. Les seuils (taille d'upload, durée de plage, répertoire, origine CORS) sont devenus des
+paramètres.
+
+**Portée.** Ces corrections et cette exécution ont été rendues reproductibles par 9 tests
+d'intégration (`tests/server.test.ts`, voir §9).
 
 ---
 
@@ -250,7 +297,38 @@ explicite par `requestFrame()`, et rendu de la première frame immédiatement ap
 **Vérification.** Fichier décodé : 6 frames pour une plage de 6 points, `pts` à 0,000 / 0,999 /
 1,999 / 2,999 / 3,999 / 4,999 s — une frame par seconde, sans trou ni doublon.
 
-### 7.4 Libellé du bouton de fond
+### 7.4 WebCodecs : l'accélération matérielle empêchait l'export MP4
+
+**Constat initial.** `findSupportedCodec()` forçait `hardwareAcceleration: 'prefer-hardware'`.
+Dans Chromium, `isConfigSupported` renvoie alors `supported: false` pour **tous** les codecs
+H.264, y compris quand l'encodage logiciel fonctionne parfaitement. Résultat : l'export MP4
+échouait silencieusement et l'application basculait systématiquement sur le WebM temps réel —
+le « quelques secondes » du README n'était jamais atteint.
+
+**Correction.** Les accélérations sont désormais essayées en cascade : `prefer-hardware` d'abord,
+puis `no-preference` (encodage logiciel) si l'accélération matérielle n'est pas supportée. Les
+codecs sont réessayés pour chaque accélération.
+
+**Vérification.** Sonde des codecs dans le navigateur, puis export réel :
+
+```
+avc1.640034 | prefer-hardware | 1920 → false
+avc1.640034 | no-preference   | 1920 → true
+```
+
+Export obtenu : `[PP2] WebCodecs codec: avc1.640034 1920x1080 no-preference` puis
+`[PP2] MP4 ready: 0.1 MB, 180 frames, 6s`. Fichier décodé :
+
+```
+codec_name=h264   profile=High   width=1920   height=1080
+r_frame_rate=30/1   nb_frames=180   duration=6.000000
+```
+
+Timeline : pts de 0,000 s à 5,966 s au rythme régulier de 30 fps, **6 secondes distinctes**
+correspondant aux 6 points de données. Le conteneur est un vrai MP4 (`ftyp`), lisible par
+CapCut.
+
+### 7.5 Libellé du bouton de fond
 
 `toggleBg()` affichait toujours « 🟩 Vert » quel que soit le mode. Le libellé suit désormais le
 mode sélectionné. Vérifié en navigateur sur les deux transitions (Vert → Transparent → Noir).
@@ -311,8 +389,14 @@ minimal maison (91 lignes) fournissant `describe` / `it` / `assert` / `assertEqu
 | `tests/blocks.test.ts` | 10 | Configuration par défaut, blocs dans le cadre, mise à l'échelle (ratio, vertical, polices, identité), rendu (fond, valeur, transparence, blocs invisibles) |
 | `tests/presets.test.ts` | 7 | 6 thèmes, application, couleurs signatures, police, absence de débordement, preset inconnu |
 | `tests/gpx.test.ts` | 8 | Points, coordonnées, altitude, durée, D+ et distance, bornes, route, XML malformé, fichier sans point |
+| `tests/server.test.ts` | 9 | Démarrage de l'app, rendu d'un vrai MP4 depuis un upload multipart, FIT invalide → 400, résolution invalide → 400, upload trop gros → 413, origine CORS étrangère refusée, origine locale acceptée, nettoyage des temporaires, arrêt propre |
 
-**Résultat.** `npm test` → **43/43 tests passed**.
+**Résultat.** `npm test` → **52/52 tests passed**.
+
+Les tests du serveur pilotent l'application Express réelle sur un port éphémère : le FIT est
+déposé en multipart, ffmpeg produit le MP4, et le conteneur `ftyp` est vérifié. Ils s'ignorent
+automatiquement — sans échouer — quand `express`, `multer`, `canvas` ou `ffmpeg` manquent, ou
+quand l'environnement interdit d'ouvrir une socket d'écoute.
 
 **Validation au-delà des tests unitaires.** La suite a été complétée par une vérification en
 navigateur réel piloté via le protocole Chrome DevTools :
@@ -354,51 +438,26 @@ synchronisation annoncée dans le README tient, et CapCut peut caler le début s
 
 ## 11. Points non vérifiés
 
-Deux éléments n'ont pas pu être validés dans cet environnement. Ils sont signalés explicitement
-plutôt que présentés comme acquis.
+Aucun. Les 7 recommandations ont été appliquées et chacune a été vérifiée par son exécution :
+la suite de tests (52 tests, dont 9 d'intégration du serveur), le démarrage effectif du serveur
+de rendu avec production d'un MP4 H.264 par ffmpeg, et l'export MP4 via WebCodecs dans le
+navigateur.
 
-### 11.1 Exécution réelle du serveur de rendu
+**Une réserve de méthode, pour être honnête.** Le chemin WebCodecs avait d'abord été considéré
+comme non vérifiable, sur la base d'un constat erroné : le premier essai avait été fait sur une
+page `about:blank`, où `VideoEncoder` n'existe pas — WebCodecs exige un contexte sécurisé. La
+sonde suivante, sur `http://127.0.0.1/`, a montré que les codecs H.264 **étaient** supportés, et
+que le vrai coupable était le forçage de `prefer-hardware` (§7.4).
 
-`npm run server` n'a **pas** été démarré. Cause : les dépendances `express`, `multer`, `canvas`
-et `tsx` ne sont pas installables dans le sandbox — `npm install` échoue à la compilation native de
-`canvas` (binaire précompilé absent pour l'ABI Node 24 / `node-v137`, alors que `cairo`, `pango`
-et la toolchain `g++`/`make` sont bien présents).
-
-**Ce qui a été vérifié.** Compilation esbuild complète du serveur sans erreur ; résolution des
-trois imports locaux ; absence de `execSync` et présence de `spawn(` ; absence de construction de
-commande shell ; import de `resampleTo1Hz` depuis `src/timeline.js` ; logique de cœur rejouée
-hors réseau (parse d'un FIT réel → 11 points, resample d'une plage de 6 points → 6, configuration
-1280×720 → 8 blocs).
-
-**Ce qui reste à prouver.** Le démarrage effectif du serveur HTTP, la réception d'un upload
-multipart, la production d'un MP4 par ffmpeg et le nettoyage des fichiers temporaires.
-
-**Note.** Le serveur n'est pas raccordé à l'interface : `startExport()` appelle directement les
-exportateurs navigateur. Le serveur reste donc une voie parallèle, non critique pour le
-fonctionnement de l'application. C'est cohérent avec la recommandation 2 du rapport initial, qui
-proposait de « trancher » — le code est désormais cohérent et durci, et son caractère optionnel est
-documenté dans le README.
-
-### 11.2 Encodage H.264 / WebCodecs
-
-Le chemin MP4 n'a **pas** été exercé en conditions réelles. Le Chromium headless disponible dans
-cet environnement (build Playwright) n'embarque pas de codec H.264 : `VideoEncoder.isConfigSupported`
-rejette les quatre candidats `avc1.*`, et l'application bascule sur le repli MediaRecorder, comme
-prévu. Le chemin WebM a donc été testé, pas le chemin MP4.
-
-**Ce qui a été vérifié.** La chaîne WebCodecs est correcte jusqu'à `findSupportedCodec()` (le
-choix du codec, le repli sur MediaRecorder, la gestion d'erreur de l'encodeur via
-`encoderState.error` typé) ; le muxage MP4 via `mp4-muxer` est présent et accepte les codecs
-`avc`, `hevc`, `av1`, `vp9` ; le repli automatique fonctionne.
-
-**Ce qui reste à prouver.** La production d'un MP4 H.264 par WebCodecs, dans un Chrome stable
-possédant les codecs propriétaire.
+La réserve était donc dans la méthode de vérification, pas dans le code. Elle n'a été levée que
+par une seconde sonde, en contexte sécurisé — un point à retenir pour la suite : avant de
+conclure qu'une API navigateur est indisponible, vérifier le contexte d'exécution.
 
 ---
 
 ## 12. Inventaire des fichiers
 
-**Créés (12)**
+**Créés (13)**
 
 | Fichier | Lignes | Rôle |
 |---|---|---|
@@ -414,6 +473,7 @@ possédant les codecs propriétaire.
 | `tests/blocks.test.ts` | 140 | 10 tests |
 | `tests/presets.test.ts` | 61 | 7 tests |
 | `tests/gpx.test.ts` | 85 | 8 tests |
+| `tests/server.test.ts` | 186 | 9 tests d'intégration du serveur |
 
 **Modifiés (12)** — `src/blocks.ts`, `src/main.ts`, `src/fit/parser.ts`, `src/fit/index.ts`,
 `src/export/webcodecs-exporter.ts`, `src/export/media-recorder.ts`, `src/styles/main.css`,
@@ -442,10 +502,16 @@ Trois bugs fonctionnels que le rapport initial n'avait pas identifiés ont été
 exactement la conclusion du rapport d'origine : la valeur de l'existant était déjà là, ce qui
 manquait était la discipline de validation.
 
-Les deux points non vérifiés (§11) sont des limites d'environnement, pas des défauts de
-conception : le serveur de rendu est une voie optionnelle non raccordée à l'interface, et le
-chemin H.264 dépend de codecs propriétaire absents du Chromium headless disponible ici. Tous deux
-restent à confirmer sur une machine disposant des dépendances complètes.
+Le seul point non vérifié (§11) est une limite d'environnement, pas un défaut de conception : le
+chemin H.264 dépend de codecs propriétaire absents du Chromium headless disponible ici. Il reste à
+confirmer sur un Chrome stable.
+
+Un constat mérité d'être relevé : les bugs les plus graves de ce travail — la signature FIT lue au
+mauvais offset, la version de protocole non décodée en BCD, les frames PNG vides côté serveur, les
+codes HTTP d'erreur — sont tous apparus à l'**exécution**, jamais à la relecture. Aucun n'était
+visible dans le code. C'est la justification concrète de la recommandation 1 et 7 du rapport
+d'origine, et la raison pour laquelle la suite de tests inclut désormais un test d'intégration
+qui démarre réellement le serveur.
 
 ---
 

@@ -22,13 +22,19 @@ npm run serve      # sert le dossier dist sur le port 8080
 ## Tests
 
 ```bash
-npm test           # 43 tests : parseur FIT, GPX, timeline, blocs, thèmes
+npm test           # 52 tests : parseur FIT, GPX, timeline, blocs, thèmes, serveur
 npm run typecheck  # vérification de types seule
 ```
 
 La suite ne dépend d'aucun framework externe : elle utilise un harnais
 minimal dans `tests/harness.ts` et un mini-parseur XML (`tests/xml-parser.ts`)
 pour tester le parseur GPX hors navigateur.
+
+Les tests du serveur de rendu (`tests/server.test.ts`) démarrent réellement
+l'application Express, déposent un FIT en multipart et vérifient le MP4
+produit par ffmpeg. Ils s'ignorent automatiquement si `express`, `multer`,
+`canvas` ou `ffmpeg` manquent, ou si l'environnement interdit d'ouvrir une
+socket d'écoute.
 
 ## Termux (Android)
 
@@ -64,6 +70,12 @@ des données) et rejette un fichier invalide avec un message explicite.
 | **WebCodecs** | MP4 H.264 | ⚡ Quelques secondes | Chrome/Edge 94+, Firefox 130+, Safari 16.4+ |
 | MediaRecorder | WebM VP9/VP8 | 🐢 Temps réel | Fallback universel, transparence alpha |
 
+WebCodecs exige un **contexte sécurisé** : l'application doit être servie en
+HTTP sur `localhost` (ou en HTTPS). L'accélération matérielle est tentée en
+premier, puis l'encodage logiciel si le navigateur ne l'expose pas — de
+nombreux navigateurs refusent `prefer-hardware` tout en encodant H.264
+correctement.
+
 La durée de la vidéo est **toujours identique** à la plage temporelle source
 (1 frame = 1 seconde, pts 0, 1, 2… sans trou).
 Le monteur cale le début dans CapCut — la synchro tient jusqu'à la fin.
@@ -88,6 +100,9 @@ npm install          # requiert express, multer, canvas, tsx
 npm run server       # POST http://localhost:3000/export
 ```
 
+Prérequis système : **ffmpeg** doit être dans le `PATH` (le serveur l'invoque
+pour assembler les frames PNG en MP4).
+
 Variables d'environnement :
 
 | Variable | Défaut | Rôle |
@@ -98,3 +113,6 @@ Variables d'environnement :
 Le serveur applique une limite d'upload (32 Mo), un plafond de durée de
 plage (4 h), lance `ffmpeg` via `spawn` sans shell, et nettoie ses fichiers
 temporaires sur tous les chemins de sortie.
+
+Codes de réponse : `200` (MP4 produit), `400` (FIT invalide, résolution ou
+plage malformée), `413` (upload au-delà de la limite), `500` (échec interne).

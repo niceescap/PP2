@@ -13,19 +13,30 @@ import { parseFIT } from '../src/fit/index.js';
 import { createDefaultConfig, drawOverlay } from '../src/blocks.js';
 import { resampleTo1Hz } from '../src/timeline.js';
 
-const UPLOAD_DIR = '/tmp/pp2-uploads';
-const MAX_UPLOAD_BYTES = 32 * 1024 * 1024; // 32 MB — a FIT file is a few MB max
-const MAX_RANGE_SECONDS = 4 * 60 * 60;    // 4 h of video per render
+export interface ServerOptions {
+  /** Directory receiving the uploaded FIT files. */
+  uploadDir?: string;
+  /** Maximum accepted upload size, in bytes. */
+  maxUploadBytes?: number;
+  /** Maximum length of the exported range, in seconds. */
+  maxRangeSeconds?: number;
+  /** Origin allowed by CORS. Empty means "localhost only". */
+  allowedOrigin?: string;
+}
 
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const DEFAULTS = {
+  uploadDir: '/tmp/pp2-uploads',
+  maxUploadBytes: 32 * 1024 * 1024, // 32 MB — a FIT file is a few MB max
+  maxRangeSeconds: 4 * 60 * 60,    // 4 h of video per render
+};
 
-const upload = multer({
-  dest: UPLOAD_DIR,
-  limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
-});
-
-const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+/** Error raised for an invalid client request: reported as HTTP 400. */
+class BadRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BadRequestError';
+  }
+}
 
 /** Remove a file or directory, ignoring any failure. */
 function safeRemove(target?: string): void {
@@ -40,12 +51,29 @@ function safeRemove(target?: string): void {
 // CORS for browser client.
 // The server writes files to disk and shells out to ffmpeg: it must not be
 // reachable from any origin by default. Set ALLOWED_ORIGIN to open it up.
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? '';
+/**
+ * Build the Express application.
+ * Exported so the test suite can drive it without binding a port.
+ */
+export function createApp(options: ServerOptions = {}): express.Express {
+const uploadDir = options.uploadDir ?? DEFAULTS.uploadDir;
+const maxUploadBytes = options.maxUploadBytes ?? DEFAULTS.maxUploadBytes;
+const maxRangeSeconds = options.maxRangeSeconds ?? DEFAULTS.maxRangeSeconds;
+const allowedOrigin = options.allowedOrigin ?? process.env.ALLOWED_ORIGIN ?? '';
+
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const upload = multer({
+  dest: uploadDir,
+  limits: { fileSize: maxUploadBytes, files: 1 },
+});
+
+const app = express();
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (ALLOWED_ORIGIN) {
-    res.header('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  if (allowedOrigin) {
+    res.header('Access-Control-Allow-Origin', allowedOrigin);
   } else if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
   }
@@ -81,21 +109,31 @@ app.post('/export', upload.single('fit'), async (req, res) => {
     // 1. Read and parse FIT (the parser validates the FIT header)
     const raw = fs.readFileSync(filePath);
     const buffer = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
-    const activity = parseFIT(buffer);
+    let activity;
+    try {
+      activity = parseFIT(buffer);
+    } catch (err: any) {
+      // A malformed upload is a client error, not a server failure.
+      throw new BadRequestError(err?.message || 'Invalid FIT file');
+    }
 
     if (activity.points.length === 0) {
-      res.status(400).json({ error: 'No data points in FIT file' });
-      return;
+      throw new BadRequestError('No data points in FIT file');
     }
 
     // 2. Read range + resolution + bg mode
-    const range = JSON.parse(req.body.range || '{"start":0,"end":0}');
-    const resolution = JSON.parse(req.body.resolution || '[1920,1080]');
+    let range: any;
+    let resolution: any;
+    try {
+      range = JSON.parse(req.body.range || '{"start":0,"end":0}');
+      resolution = JSON.parse(req.body.resolution || '[1920,1080]');
+    } catch {
+      throw new BadRequestError('Invalid range or resolution JSON');
+    }
     const bgMode: 'green' | 'black' | 'transparent' = (req.body.bgMode as any) || 'green';
 
     if (!Array.isArray(resolution) || resolution.length !== 2) {
-      res.status(400).json({ error: 'Invalid resolution' });
-      return;
+      throw new BadRequestError('Invalid resolution');
     }
     const width = Math.max(16, Math.min(3840, Math.round(resolution[0])));
     const height = Math.max(16, Math.min(3840, Math.round(resolution[1])));
@@ -107,9 +145,8 @@ app.post('/export', upload.single('fit'), async (req, res) => {
     const points = resampleTo1Hz(activity.points.slice(startIdx, endIdx + 1));
     const durationSec = points.length;
 
-    if (durationSec > MAX_RANGE_SECONDS) {
-      res.status(400).json({ error: `Range too long (${durationSec}s > ${MAX_RANGE_SECONDS}s)` });
-      return;
+    if (durationSec > maxRangeSeconds) {
+      throw new BadRequestError(`Range too long (${durationSec}s > ${maxRangeSeconds}s)`);
     }
 
     console.log(`[PP2 Server] Points: ${points.length}, Duration: ${durationSec}s, Res: ${width}x${height}`);
@@ -131,7 +168,7 @@ app.post('/export', upload.single('fit'), async (req, res) => {
       const absIdx = activity.points.indexOf(point);
       drawOverlay(ctx, overlayConfig, point, activity.points, absIdx >= 0 ? absIdx : i, activity.bounds);
       const pngPath = path.join(framesDir, `frame_${String(i).padStart(4, '0')}.png`);
-      fs.writeFileSync(pngPath, canvas.toBuffer('png'));
+      fs.writeFileSync(pngPath, canvas.toBuffer('image/png'));
       if (i % 50 === 0 || i === points.length - 1) {
         console.log(`[PP2 Server] Frame ${i}/${points.length}`);
       }
@@ -159,11 +196,15 @@ app.post('/export', upload.single('fit'), async (req, res) => {
     res.sendFile(outputPath, () => cleanup());
 
   } catch (e: any) {
-    console.error('[PP2 Server] Error:', e);
     cleanup();
-    if (!res.headersSent) {
-      res.status(500).json({ error: e?.message || 'Unknown server error' });
+    if (res.headersSent) return;
+
+    if (e instanceof BadRequestError) {
+      res.status(400).json({ error: e.message });
+      return;
     }
+    console.error('[PP2 Server] Error:', e);
+    res.status(500).json({ error: e?.message || 'Unknown server error' });
   }
 });
 
@@ -181,7 +222,44 @@ function runFfmpeg(args: string[]): Promise<void> {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`[PP2] Render server ready: http://localhost:${PORT}`);
-  console.log(`[PP2] Endpoint: POST /export`);
+// Errors raised by the upload middleware never reach the route handler:
+// map them to explicit status codes instead of Express' default 500.
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    res.status(413).json({ error: `File too large (max ${maxUploadBytes} bytes)` });
+    return;
+  }
+  if (err && err.code === 'LIMIT_UNEXPECTED_FILE') {
+    res.status(400).json({ error: 'Unexpected file field, expected "fit"' });
+    return;
+  }
+  if (err && err.code === 'LIMIT_FILE_COUNT') {
+    res.status(400).json({ error: 'Only one file accepted' });
+    return;
+  }
+  console.error('[PP2 Server] Unhandled error:', err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: err?.message || 'Unknown server error' });
+  }
 });
+
+return app;
+}
+
+/** Start the render server. */
+export function startServer(port = Number(process.env.PORT) || 3000): void {
+  const app = createApp();
+  app.listen(port, () => {
+    console.log(`[PP2] Render server ready: http://localhost:${port}`);
+    console.log(`[PP2] Endpoint: POST /export`);
+  });
+}
+
+// Only start listening when the file is executed directly, so the test
+// suite can import `createApp` without binding a port.
+const isDirectRun = !!process.argv[1] &&
+  /render-server(\.ts|\.js)?$/.test(process.argv[1].split('\\').join('/'));
+
+if (isDirectRun) {
+  startServer();
+}

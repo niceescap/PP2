@@ -9,5 +9,6 @@ import './timeline.test.js';
 import './blocks.test.js';
 import './presets.test.js';
 import './gpx.test.js';
+import './server.test.js';
 
 await run();
