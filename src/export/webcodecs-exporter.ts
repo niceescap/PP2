@@ -86,8 +86,6 @@ export class WebCodecsExporter {
       this.options.onError('Aucun codec H.264 supporté par ce navigateur (WebCodecs)');
       return;
     }
-    console.log('[PP2] WebCodecs codec:', encoderConfig.codec, `${width}x${height}@${OUT_FPS}fps`);
-
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
       video: {
@@ -175,21 +173,39 @@ export class WebCodecsExporter {
     }
   }
 
+  /**
+   * Find an H.264 configuration the browser accepts.
+   *
+   * Hardware acceleration is tried first, then software encoding: many
+   * browsers report `supported: false` for `prefer-hardware` even though
+   * they can encode H.264 fine in software. Without this fallback the
+   * export silently degraded to the slower WebM path.
+   */
   private async findSupportedCodec(width: number, height: number): Promise<VideoEncoderConfig | null> {
-    for (const codec of CODEC_CANDIDATES) {
-      const config: VideoEncoderConfig = {
-        codec,
-        width,
-        height,
-        bitrate: 8_000_000,
-        framerate: OUT_FPS,
-        hardwareAcceleration: 'prefer-hardware',
-      };
-      try {
-        const support = await VideoEncoder.isConfigSupported(config);
-        if (support.supported) return config;
-      } catch {
-        // try next
+    const accelerations: VideoEncoderConfig['hardwareAcceleration'][] = [
+      'prefer-hardware',
+      'no-preference',
+    ];
+
+    for (const acceleration of accelerations) {
+      for (const codec of CODEC_CANDIDATES) {
+        const config: VideoEncoderConfig = {
+          codec,
+          width,
+          height,
+          bitrate: 8_000_000,
+          framerate: OUT_FPS,
+          hardwareAcceleration: acceleration,
+        };
+        try {
+          const support = await VideoEncoder.isConfigSupported(config);
+          if (support.supported) {
+            console.log('[PP2] WebCodecs codec:', config.codec, `${width}x${height}`, acceleration);
+            return config;
+          }
+        } catch {
+          // try next
+        }
       }
     }
     return null;
