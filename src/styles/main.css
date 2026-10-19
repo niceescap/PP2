@@ -501,9 +501,64 @@ input[type="range"]::-webkit-slider-thumb {
   :root { --panel-w: 240px; }
 }
 @media (max-width: 900px) {
-  .main { flex-direction: column; }
-  .panel { width: 100%; max-height: 30vh; border-right: none; border-bottom: 1px solid var(--border); }
+  /* ── Flux vertical défilant ──────────────────────────
+     Les panneaux étaient confinés à 30vh avec un scroll
+     interne : la moitié des contrôles (dont le bouton
+     « Générer l'overlay ») se retrouvait hors de l'écran
+     sans que le document puisse défiler. On libère la
+     hauteur et on laisse .main défiler verticalement. */
+  .main {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .panel {
+    width: 100%;
+    max-height: none;
+    overflow: visible;
+    flex: 0 0 auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
   .panel-left { order: 2; }
   .panel-right { order: 3; }
-  .preview-area { order: 1; min-height: 40vh; }
+  .preview-area {
+    order: 1;
+    flex: 0 0 auto;
+    height: 32vh;
+    min-height: 200px;
+  }
+
+  /* ── Barre d'action fixe ─────────────────────────────
+     L'action principale reste en permanence visible et
+     atteignable au pouce, sans avoir à faire défiler
+     jusqu'au bas du panneau Export. */
+  .export-actions {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 900;
+    display: flex;
+    gap: 8px;
+    margin: 0;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: rgba(12, 12, 14, 0.92);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border-strong);
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.55);
+  }
+  .export-actions button {
+    width: auto;
+    flex: 1;
+    min-height: 48px;
+  }
+
+  /* Réserve la place de la barre pour ne masquer aucun contenu. */
+  .app { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+
+  /* Le toast ne doit plus passer sous la barre d'action. */
+  .toast { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
 }
