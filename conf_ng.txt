@@ -1,0 +1,148 @@
+# ═══════════════════════════════════════════════════════════════════════
+# PaceParser2 — paceparser.hqwi.re
+#
+# Application 100 % statique (Vite build) : l'export vidéo se fait
+# intégralement dans le navigateur (WebCodecs / MediaRecorder), aucun
+# appel à un backend.
+#
+# Installation :
+#   1. Déployer le build :  npm run build
+#      rsync -a --delete dist/ root@<serveur>:/var/www/paceparser2/
+#   2. Copier ce fichier :  cp conf_ng.txt /etc/nginx/sites-available/paceparser.hqwi.re
+#   3. Activer :             ln -s ../sites-available/paceparser.hqwi.re \
+#                                 /etc/nginx/sites-enabled/paceparser.hqwi.re
+#   4. Certificat :          certbot --nginx -d paceparser.hqwi.re
+#   5. Recharger :           nginx -t && systemctl reload nginx
+#
+# Le certificat n'existe pas encore sur ce serveur : le bloc 443 ci-dessous
+# suppose que certbot l'a créé. Pour démarrer sans TLS, commenter le
+# bloc 443 et ne garder que le bloc 80.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+# ── HTTP : challenge ACME + redirection HTTPS ─────────────────────
+server {
+    listen 80;
+    listen [::]:80;
+    server_name paceparser.hqwi.re;
+
+    # Défi Let's Encrypt : doit rester en HTTP et accessible sans auth.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        autoindex off;
+        disable_symlinks on;
+        allow all;
+        limit_except GET { deny all; }
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+
+# ── HTTPS ─────────────────────────────────────────────────────────
+server {
+    # nginx 1.24 : le protocole HTTP/2 se déclare dans la directive listen.
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name paceparser.hqwi.re;
+
+    ssl_certificate     /etc/letsencrypt/live/paceparser.hqwi.re/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/paceparser.hqwi.re/privkey.pem;
+    # options-ssl-nginx.conf impose déjà ssl_protocols TLSv1.2 TLSv1.3
+    # et les ciphers Mozilla. Ne pas le redéclarer ici : en cas de
+    # doublon, nginx émet un avertissement « duplicate value ».
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # Racine = dossier du build Vite. Les assets sont servis en /assets/.
+    root /var/www/paceparser2;
+    index index.html;
+
+    # ── Sécurité ──────────────────────────────────────────────────
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    # L'export se fait côté navigateur : l'upload éventuel vers le
+    # serveur de rendu est plafonné à 32 Mo (limite appliquée par le
+    # serveur lui-même, cf. MAX_UPLOAD_BYTES).
+    client_max_body_size 32m;
+    client_body_timeout 60s;
+    send_timeout 60s;
+
+    # ── Fichiers sensibles inaccessibles ─────────────────────────
+    location ~ /\. { deny all; }
+    location ~* \.(?:sqlite3?|db)(?:-(?:wal|shm|journal))?$ { return 404; }
+    location ~* \.(?:env|log|ini|sh|bak|swp)$ { return 404; }
+
+    # ── Assets versionnés : cache long, immuables ────────────────
+    # Attention : dans nginx, un add_header dans un `location` annule
+    # ceux du serveur parent. Les en-têtes de sécurité sont donc
+    # répétés ici pour que les assets soient protégés eux aussi.
+    # `expires` est volontairement omis : combiné à un add_header
+    # Cache-Control il produirait deux en-têtes Cache-Control
+    # concurrents, interprétés différemment selon les navigateurs.
+    location ^~ /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options DENY always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        access_log off;
+        try_files $uri =404;
+    }
+
+    # ── Challenge ACME également en HTTPS ───────────────────────
+    # La validation Let's Encrypt passe par le port 80, mais le même
+    # chemin est servi ici pour rester cohérent avec la redirection
+    # et ne pas être bloqué par la règle « deny all » sur les dotfiles.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        autoindex off;
+        disable_symlinks on;
+        allow all;
+        limit_except GET { deny all; }
+        try_files $uri =404;
+    }
+
+    # ── Application (SPA) ─────────────────────────────────────────
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ── Serveur de rendu (optionnel) ─────────────────────────────
+    # POST /export : le navigateur dépose un fichier FIT, le serveur
+    # renvoie un MP4. L'API n'est pas raccordée à l'interface : elle
+    # n'est utile que si un client externe l'appelle.
+    # Le serveur écoute sur 127.0.0.1:3000 et n'est donc joignable
+    # que par nginx.
+    #
+    # Décommenter pour l'exposer :
+    #
+    # location = /api/export {
+    #     client_max_body_size 32m;
+    #     proxy_pass http://127.0.0.1:3000/export;
+    #     proxy_http_version 1.1;
+    #     proxy_set_header Host $host;
+    #     proxy_set_header X-Real-IP $remote_addr;
+    #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #     proxy_set_header X-Forwarded-Proto $scheme;
+    #
+    #     # Le rendu ffmpeg peut durer plusieurs minutes.
+    #     proxy_connect_timeout 5s;
+    #     proxy_send_timeout 600s;
+    #     proxy_read_timeout 600s;
+    #     proxy_request_buffering off;
+    #     proxy_buffering off;
+    # }
+
+    # ── Journalisation ───────────────────────────────────────────
+    access_log /var/log/nginx/paceparser.access.log;
+    error_log  /var/log/nginx/paceparser.error.log warn;
+}
