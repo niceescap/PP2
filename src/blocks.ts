@@ -18,6 +18,8 @@ export interface BlockStyle {
   showLabel: boolean;
   unit: string;
   decimals: number;
+  fontFamily: string;
+  valueFontFamily: string;
 }
 
 export interface Block {
@@ -50,6 +52,8 @@ const DEFAULT_STYLE: BlockStyle = {
   showLabel: true,
   unit: '',
   decimals: 0,
+  fontFamily: "'Inter', sans-serif",
+  valueFontFamily: "'JetBrains Mono', monospace",
 };
 
 export function createDefaultConfig(width: number, height: number): OverlayConfig {
@@ -113,6 +117,57 @@ export function createDefaultConfig(width: number, height: number): OverlayConfi
         style: { ...DEFAULT_STYLE, accentColor: '#00e5ff' },
       },
     ],
+  };
+}
+
+/**
+ * Scale a block layout to a different canvas resolution.
+ * Blocks are authored in absolute pixels against the reference resolution
+ * (1920x1080); scaling keeps their relative placement when exporting
+ * to 720p, vertical or square formats.
+ */
+export function scaleBlocksToResolution(
+  blocks: Block[],
+  fromWidth: number,
+  fromHeight: number,
+  toWidth: number,
+  toHeight: number
+): Block[] {
+  if (fromWidth <= 0 || fromHeight <= 0) return blocks;
+  const scaleX = toWidth / fromWidth;
+  const scaleY = toHeight / fromHeight;
+
+  return blocks.map(block => ({
+    ...block,
+    x: Math.round(block.x * scaleX),
+    y: Math.round(block.y * scaleY),
+    w: Math.max(1, Math.round(block.w * scaleX)),
+    h: Math.max(1, Math.round(block.h * scaleY)),
+    style: {
+      ...block.style,
+      fontSize: Math.max(8, Math.round(block.style.fontSize * Math.min(scaleX, scaleY))),
+      labelSize: Math.max(6, Math.round(block.style.labelSize * Math.min(scaleX, scaleY))),
+      borderRadius: Math.max(0, Math.round(block.style.borderRadius * Math.min(scaleX, scaleY))),
+    },
+  }));
+}
+
+/**
+ * Build an export-ready config for a target resolution.
+ * The source layout (authored at the reference resolution) is scaled
+ * proportionally so blocks never overflow the exported frame.
+ */
+export function createConfigForResolution(
+  config: OverlayConfig,
+  width: number,
+  height: number
+): OverlayConfig {
+  if (config.width === width && config.height === height) return config;
+  return {
+    ...config,
+    width,
+    height,
+    blocks: scaleBlocksToResolution(config.blocks, config.width, config.height, width, height),
   };
 }
 
@@ -212,7 +267,7 @@ function drawBlock(
 
   // Label
   if (style.showLabel) {
-    ctx.font = `600 ${style.labelSize}px 'Inter', sans-serif`;
+    ctx.font = `600 ${style.labelSize}px ${style.fontFamily}`;
     ctx.fillStyle = style.accentColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -221,14 +276,14 @@ function drawBlock(
 
   // Value
   ctx.fillStyle = style.textColor;
-  ctx.font = `800 ${style.fontSize}px 'JetBrains Mono', monospace`;
+  ctx.font = `800 ${style.fontSize}px ${style.valueFontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(valueStr, x + w / 2, y + h / 2 + 4);
 
   // Unit
   if (style.unit) {
-    ctx.font = `500 ${style.labelSize}px 'Inter', sans-serif`;
+    ctx.font = `500 ${style.labelSize}px ${style.fontFamily}`;
     ctx.fillStyle = style.accentColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';

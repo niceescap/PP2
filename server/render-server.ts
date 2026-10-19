@@ -7,29 +7,70 @@ import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { spawn } from 'child_process';
 import { createCanvas } from 'canvas';
 import { parseFIT } from '../src/fit/index.js';
-import { createDefaultConfig, drawOverlay, resampleTo1Hz } from '../src/blocks.js';
+import { createDefaultConfig, drawOverlay } from '../src/blocks.js';
+import { resampleTo1Hz } from '../src/timeline.js';
 
-const upload = multer({ dest: '/tmp/pp2-uploads/' });
+const UPLOAD_DIR = '/tmp/pp2-uploads';
+const MAX_UPLOAD_BYTES = 32 * 1024 * 1024; // 32 MB — a FIT file is a few MB max
+const MAX_RANGE_SECONDS = 4 * 60 * 60;    // 4 h of video per render
+
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const upload = multer({
+  dest: UPLOAD_DIR,
+  limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+});
+
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
-// CORS for browser client
+/** Remove a file or directory, ignoring any failure. */
+function safeRemove(target?: string): void {
+  if (!target) return;
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
+}
+
+// CORS for browser client.
+// The server writes files to disk and shells out to ffmpeg: it must not be
+// reachable from any origin by default. Set ALLOWED_ORIGIN to open it up.
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? '';
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGIN) {
+    res.header('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  } else if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Vary', 'Origin');
   res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
   next();
 });
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '1mb' }));
 
 app.post('/export', upload.single('fit'), async (req, res) => {
+  const filePath = req.file?.path;
+  let framesDir: string | undefined;
+  let outputPath: string | undefined;
+
+  // Any exit path (success, error, crash) must clean the temp files.
+  const cleanup = () => {
+    safeRemove(framesDir);
+    safeRemove(outputPath);
+    safeRemove(filePath);
+  };
+
   try {
-    const filePath = req.file?.path;
     if (!filePath) {
       res.status(400).json({ error: 'No FIT file uploaded' });
       return;
@@ -37,15 +78,27 @@ app.post('/export', upload.single('fit'), async (req, res) => {
 
     console.log('[PP2 Server] Received:', req.file?.originalname);
 
-    // 1. Read and parse FIT
+    // 1. Read and parse FIT (the parser validates the FIT header)
     const raw = fs.readFileSync(filePath);
     const buffer = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
     const activity = parseFIT(buffer);
+
+    if (activity.points.length === 0) {
+      res.status(400).json({ error: 'No data points in FIT file' });
+      return;
+    }
 
     // 2. Read range + resolution + bg mode
     const range = JSON.parse(req.body.range || '{"start":0,"end":0}');
     const resolution = JSON.parse(req.body.resolution || '[1920,1080]');
     const bgMode: 'green' | 'black' | 'transparent' = (req.body.bgMode as any) || 'green';
+
+    if (!Array.isArray(resolution) || resolution.length !== 2) {
+      res.status(400).json({ error: 'Invalid resolution' });
+      return;
+    }
+    const width = Math.max(16, Math.min(3840, Math.round(resolution[0])));
+    const height = Math.max(16, Math.min(3840, Math.round(resolution[1])));
 
     const startIdx = Math.max(0, Math.round(range.start || 0));
     const endIdx = Math.min(activity.points.length - 1, Math.round(range.end || (activity.points.length - 1)));
@@ -54,18 +107,23 @@ app.post('/export', upload.single('fit'), async (req, res) => {
     const points = resampleTo1Hz(activity.points.slice(startIdx, endIdx + 1));
     const durationSec = points.length;
 
-    console.log(`[PP2 Server] Points: ${points.length}, Duration: ${durationSec}s, Res: ${resolution[0]}x${resolution[1]}`);
+    if (durationSec > MAX_RANGE_SECONDS) {
+      res.status(400).json({ error: `Range too long (${durationSec}s > ${MAX_RANGE_SECONDS}s)` });
+      return;
+    }
+
+    console.log(`[PP2 Server] Points: ${points.length}, Duration: ${durationSec}s, Res: ${width}x${height}`);
 
     // 4. Setup overlay config
-    const overlayConfig = createDefaultConfig(resolution[0], resolution[1]);
+    const overlayConfig = createDefaultConfig(width, height);
     overlayConfig.bgMode = bgMode;
-    overlayConfig.bgColor = bgMode === 'green' ? '#00ff66' : bgMode === 'black' ? '#000000' : '#00ff66';
+    overlayConfig.bgColor = bgMode === 'black' ? '#000000' : '#00ff66';
 
     // 5. Generate PNG frames in /tmp
-    const framesDir = `/tmp/pp2-frames-${Date.now()}`;
+    framesDir = `/tmp/pp2-frames-${Date.now()}`;
     fs.mkdirSync(framesDir, { recursive: true });
 
-    const canvas = createCanvas(resolution[0], resolution[1]);
+    const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
     for (let i = 0; i < points.length; i++) {
@@ -79,32 +137,49 @@ app.post('/export', upload.single('fit'), async (req, res) => {
       }
     }
 
-    // 6. Assemble MP4 with ffmpeg (1 fps = exact duration)
-    const outputPath = `/tmp/pp2-output-${Date.now()}.mp4`;
-    const ffmpegCmd = `ffmpeg -y -hide_banner -loglevel error -framerate 1 -i ${framesDir}/frame_%04d.png -c:v libx264 -r 1 -pix_fmt yuv420p -crf 18 -movflags +faststart -preset fast ${outputPath}`;
+    // 6. Assemble MP4 with ffmpeg (1 fps = exact duration).
+    //    spawn() with an argument array: no shell, so no interpolation risk.
+    outputPath = `/tmp/pp2-output-${Date.now()}.mp4`;
     console.log('[PP2 Server] Running ffmpeg...');
-    execSync(ffmpegCmd, { stdio: 'pipe' });
+    await runFfmpeg([
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-framerate', '1',
+      '-i', path.join(framesDir, 'frame_%04d.png'),
+      '-c:v', 'libx264', '-r', '1', '-pix_fmt', 'yuv420p',
+      '-crf', '18', '-movflags', '+faststart', '-preset', 'fast',
+      outputPath,
+    ]);
     console.log('[PP2 Server] MP4 done:', outputPath);
 
-    // 7. Send file and cleanup
+    // 7. Send file, then clean up once the transfer is done
     const stats = fs.statSync(outputPath);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Disposition', `attachment; filename="paceparser2_overlay.mp4"`);
     res.setHeader('Content-Length', stats.size);
-    res.sendFile(outputPath, () => {
-      // Cleanup async
-      setTimeout(() => {
-        try { fs.rmSync(framesDir, { recursive: true, force: true }); } catch {}
-        try { fs.unlinkSync(outputPath); } catch {}
-        try { fs.unlinkSync(filePath); } catch {}
-      }, 5000);
-    });
+    res.sendFile(outputPath, () => cleanup());
 
   } catch (e: any) {
     console.error('[PP2 Server] Error:', e);
-    res.status(500).json({ error: e.message || 'Unknown server error' });
+    cleanup();
+    if (!res.headersSent) {
+      res.status(500).json({ error: e?.message || 'Unknown server error' });
+    }
   }
 });
+
+/** Run ffmpeg without a shell, rejecting on a non-zero exit code. */
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += String(chunk); });
+    child.on('error', err => reject(new Error(`ffmpeg not available: ${err.message}`)));
+    child.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg failed (exit ${code}): ${stderr.trim().slice(0, 500)}`));
+    });
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`[PP2] Render server ready: http://localhost:${PORT}`);

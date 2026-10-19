@@ -33,6 +33,7 @@ export class VideoExporter {
   private isRunning = false;
   private intervalId: number | null = null;
   private stream: MediaStream | null = null;
+  private canRequestFrame = false;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -66,8 +67,14 @@ export class VideoExporter {
     this.canvas.width = this.options.width;
     this.canvas.height = this.options.height;
 
-    // 1 fps stream = 1 real second per data point
-    this.stream = this.canvas.captureStream(1);
+    // captureStream(0) disables the automatic capture: frames are pushed
+    // manually with requestFrame(), one per data point. Using captureStream(1)
+    // would let the browser capture on its own schedule *and* honour our
+    // requestFrame() calls, producing duplicated frames and a video longer
+    // than the source range.
+    this.stream = this.canvas.captureStream(0);
+    const track = this.stream.getVideoTracks()[0];
+    this.canRequestFrame = typeof (track as unknown as { requestFrame?: unknown })?.requestFrame === 'function';
 
     const mimeTypes = [
       'video/webm;codecs=vp9',
@@ -101,6 +108,10 @@ export class VideoExporter {
     // EXACTLY 1 frame per second = video duration = data duration
     const delayMs = 1000; // 1 fps = 1 second per data point
     this.intervalId = window.setInterval(() => this.renderFrame(), delayMs);
+
+    // Draw the first frame right away: waiting for the first tick would
+    // leave the first second of the video empty.
+    this.renderFrame();
   }
 
   private renderFrame(): void {
@@ -122,9 +133,13 @@ export class VideoExporter {
       this.bounds
     );
 
-    const track = this.stream?.getVideoTracks()[0];
-    if (track && 'requestFrame' in track) {
-      (track as any).requestFrame();
+    // With captureStream(0) the canvas is not sampled automatically:
+    // ask the track to emit the frame we just drew.
+    const track = this.stream?.getVideoTracks()[0] as unknown as
+      | { requestFrame?: () => void }
+      | undefined;
+    if (this.canRequestFrame && track?.requestFrame) {
+      track.requestFrame();
     }
 
     const pct = Math.round((idx / this.totalFrames) * 100);

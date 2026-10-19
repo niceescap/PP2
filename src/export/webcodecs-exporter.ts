@@ -9,6 +9,9 @@
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { OverlayConfig, drawOverlay } from '../blocks.js';
 import { FitPoint, MapBounds } from '../fit/types.js';
+import { resampleTo1Hz } from '../timeline.js';
+
+export { resampleTo1Hz };
 
 const OUT_FPS = 30;
 
@@ -30,35 +33,6 @@ export interface WebCodecsExportOptions {
 
 export function isWebCodecsSupported(): boolean {
   return typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
-}
-
-/**
- * Resample data points to exactly 1 Hz based on elapsed time.
- * Guarantees: video second N shows data from source second N.
- */
-export function resampleTo1Hz(points: FitPoint[]): FitPoint[] {
-  if (points.length === 0) return [];
-  if (points.length === 1) return [points[0]];
-
-  const t0 = points[0].elapsed;
-  const t1 = points[points.length - 1].elapsed;
-  const duration = Math.max(1, Math.round(t1 - t0));
-
-  const out: FitPoint[] = [];
-  let cursor = 0;
-
-  for (let k = 0; k < duration; k++) {
-    const target = t0 + k;
-    // Advance cursor to the point closest to target time
-    while (
-      cursor < points.length - 1 &&
-      Math.abs(points[cursor + 1].elapsed - target) <= Math.abs(points[cursor].elapsed - target)
-    ) {
-      cursor++;
-    }
-    out.push(points[cursor]);
-  }
-  return out;
 }
 
 export class WebCodecsExporter {
@@ -125,10 +99,10 @@ export class WebCodecsExporter {
       fastStart: 'in-memory',
     });
 
-    let encoderError: Error | null = null;
+    const encoderState: { error: Error | null } = { error: null };
     this.encoder = new VideoEncoder({
       output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-      error: (e) => { encoderError = e; },
+      error: (e) => { encoderState.error = e; },
     });
     this.encoder.configure(encoderConfig);
 
@@ -138,8 +112,8 @@ export class WebCodecsExporter {
     // ── Encode loop ──────────────────────────────
     for (let i = 0; i < totalSeconds; i++) {
       if (this.cancelled) { this.safeClose(); return; }
-      if (encoderError) {
-        this.options.onError(`Erreur encodage: ${encoderError.message}`);
+      if (encoderState.error) {
+        this.options.onError(`Erreur encodage: ${encoderState.error.message}`);
         this.safeClose();
         return;
       }

@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview --host 0.0.0.0",
     "serve": "python3 -m http.server 8080 --directory dist",
-    "server": "npx tsx server/render-server.ts",
+    "test": "esbuild tests/index.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/pp2-tests.mjs --log-level=warning && node node_modules/.cache/pp2-tests.mjs",
+    "server": "tsx server/render-server.ts",
     "start-all": "npm run server & npm run dev"
   },
   "dependencies": {

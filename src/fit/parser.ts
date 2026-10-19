@@ -4,7 +4,7 @@
 // Adapted from PaceParser/explorer.html with TypeScript + improvements
 // ═══════════════════════════════════════════════════════════════
 
-import { FitActivity, FitPoint, MapBounds, FIT_EPOCH, FIT_TYPES, RECORD_FIELDS } from './types.js';
+import { FitActivity, FitPoint, MapBounds, FIT_EPOCH, FIT_TYPES, RECORD_FIELDS, SPORT_MAP } from './types.js';
 
 interface FieldDef {
   name: string;
@@ -21,16 +21,40 @@ interface MsgDef {
 export function parseFIT(buffer: ArrayBuffer): FitActivity {
   const data = new Uint8Array(buffer);
   const view = new DataView(buffer);
-  const headerLen = data[0];
+
+  // ── Header validation ─────────────────────────
+  // The 14-byte FIT header is:
+  //   [0] header size | [1] protocol | [2..3] profile | [4..7] data size
+  //   [8..11] ".FIT"  | [12..13] header CRC
+  // The 12-byte variant omits the CRC but keeps the signature at [8..11].
+  if (data.length < 12) {
+    throw new Error('Fichier trop court pour être un fichier FIT');
+  }
+  const headerSize = data[0];
+  if (headerSize !== 12 && headerSize !== 14) {
+    throw new Error(`Taille d'en-tête FIT invalide (${headerSize})`);
+  }
+  const signature = String.fromCharCode(data[8], data[9], data[10], data[11]);
+  if (signature !== '.FIT') {
+    throw new Error(`En-tête FIT invalide (signature \"${signature}\" au lieu de \".FIT\")`);
+  }
+  // The protocol version is BCD encoded: 0x10 means 1.0.
+  const protocolVersion = (data[1] >> 4) * 10 + (data[1] & 0x0F);
+  if (protocolVersion > 21) {
+    throw new Error(`Version de protocole FIT non supportée (${protocolVersion})`);
+  }
   const dataSize = view.getUint32(4, true);
-  const dataEnd = Math.min(headerLen + dataSize, data.length);
+  if (dataSize === 0 || dataSize > 64 * 1024 * 1024) {
+    throw new Error(`Taille de données FIT invalide (${dataSize} octets)`);
+  }
+  const dataEnd = Math.min(headerSize + dataSize, data.length);
   
   const msgDefs: Record<number, MsgDef> = {};
   const records: Record<string, number | null>[] = [];
   let sportType: number | undefined;
   let activityStartTime: number | undefined;
   
-  let i = headerLen;
+  let i = headerSize;
   
   while (i < dataEnd) {
     if (i >= data.length) break;
@@ -45,7 +69,8 @@ export function parseFIT(buffer: ArrayBuffer): FitActivity {
       if (defn) {
         const rec: Record<string, number | null> = {};
         for (const f of defn.fields) {
-          rec[f.name] = readField(view, data, i, f.size, f.type, defn.endian);
+          const value = readField(view, data, i, f.size, f.type, defn.endian);
+          rec[f.name] = typeof value === 'number' ? value : null;
           i += f.size;
         }
         // Add compressed timestamp offset
@@ -104,21 +129,30 @@ export function parseFIT(buffer: ArrayBuffer): FitActivity {
       const rec: Record<string, number | null> = {};
       for (const f of defn.fields) {
         if (i + f.size > data.length) break;
-        rec[f.name] = readField(view, data, i, f.size, f.type, defn.endian);
+        const value = readField(view, data, i, f.size, f.type, defn.endian);
+        rec[f.name] = typeof value === 'number' ? value : null;
         i += f.size;
       }
       
       if (defn.global === 20 && rec.timestamp !== null) {
         records.push(rec);
+      } else if (defn.global === 12) {
+        // sport message: field 0 = sport enum
+        const sport = rec['f0'];
+        if (typeof sport === 'number') sportType = sport;
+      } else if (defn.global === 18) {
+        // session message: field 253 = start_time
+        const start = rec['f253'];
+        if (typeof start === 'number') activityStartTime = start;
       }
     }
   }
   
   // Convert raw records to FitPoints
-  return convertRecords(records, activityStartTime);
+  return convertRecords(records, activityStartTime, sportType);
 }
 
-function readField(view: DataView, data: Uint8Array, offset: number, size: number, ftype: string, endian: number): number | null {
+function readField(view: DataView, data: Uint8Array, offset: number, size: number, ftype: string, endian: number): number | string | null {
   const le = endian === 0;
   
   try {
@@ -128,10 +162,26 @@ function readField(view: DataView, data: Uint8Array, offset: number, size: numbe
       case 'sint16': return view.getInt16(offset, le);
       case 'uint16': return view.getUint16(offset, le);
       case 'sint8': return view.getInt8(offset);
-      case 'uint8': 
+      case 'uint8':
       case 'uint8z':
       case 'enum':
         return data[offset];
+      case 'uint16z': return view.getUint16(offset, le);
+      case 'uint32z': return view.getUint32(offset, le);
+      case 'byte': return data[offset];
+      case 'float32': return view.getFloat32(offset, le);
+      case 'float64': return view.getFloat64(offset, le);
+      case 'sint64': return Number(view.getBigInt64(offset, le));
+      case 'uint64':
+      case 'uint64z': return Number(view.getBigUint64(offset, le));
+      case 'string': {
+        // FIT strings are null-terminated; read up to the first NUL.
+        let end = offset;
+        while (end < data.length && data[end] !== 0) end++;
+        let out = '';
+        for (let i = offset; i < end; i++) out += String.fromCharCode(data[i]);
+        return out.length > 0 ? out : null;
+      }
       default:
         return data[offset];
     }
@@ -140,7 +190,11 @@ function readField(view: DataView, data: Uint8Array, offset: number, size: numbe
   }
 }
 
-function convertRecords(raw: Record<string, number | null>[], startTime?: number): FitActivity {
+function convertRecords(
+  raw: Record<string, number | null>[],
+  startTime?: number,
+  sportType?: number
+): FitActivity {
   // Convert raw records to structured points
   let baseTimestamp = 0;
   const points: FitPoint[] = [];
@@ -188,8 +242,9 @@ function convertRecords(raw: Record<string, number | null>[], startTime?: number
     
     if (idx > 0 && alt !== null && points[idx - 1].alt !== null && lat !== null && lon !== null) {
       const prev = points[idx - 1];
-      if (prev.lat !== null && prev.lon !== null) {
-        const dAlt = alt - prev.alt;
+      const prevAlt = prev.alt;
+      if (prev.lat !== null && prev.lon !== null && prevAlt !== null) {
+        const dAlt = alt - prevAlt;
         const distM = haversine(prev.lat, prev.lon, lat, lon);
         if (distM > 0) {
           pente = (dAlt / distM) * 100;
@@ -213,7 +268,7 @@ function convertRecords(raw: Record<string, number | null>[], startTime?: number
     });
   }
   
-  return buildActivity(points, baseTimestamp);
+  return buildActivity(points, baseTimestamp, sportType);
 }
 
 function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -225,10 +280,11 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number): numb
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-function buildActivity(points: FitPoint[], baseTimestamp: number): FitActivity {
+function buildActivity(points: FitPoint[], baseTimestamp: number, sportType?: number): FitActivity {
   const duration = points.length > 0 ? points[points.length - 1].elapsed : 0;
   const totalDist = points.length > 0 ? points[points.length - 1].distance : 0;
-  const totalDplus = points.reduce((s, p) => s + Math.max(0, p.dplus), 0);
+  // `dplus` is already a running total: read the last value, do not re-sum.
+  const totalDplus = points.length > 0 ? points[points.length - 1].dplus : 0;
   
   const powers = points.filter(p => p.power > 0).map(p => p.power);
   const hrs = points.filter(p => p.hr > 0).map(p => p.hr);
@@ -267,7 +323,7 @@ function buildActivity(points: FitPoint[], baseTimestamp: number): FitActivity {
       avgCad: cads.length > 0 ? Math.round(cads.reduce((a,b)=>a+b,0)/cads.length) : 0,
       maxSpeed: speeds.length > 0 ? Math.max(...speeds) : 0,
       avgSpeed: speeds.length > 0 ? speeds.reduce((a,b)=>a+b,0)/speeds.length : 0,
-      sport: 'cycling',
+      sport: sportType !== undefined ? (SPORT_MAP[sportType] ?? 'unknown') : 'unknown',
       startTime: new Date((baseTimestamp + FIT_EPOCH) * 1000),
       hasGps, hasPower, hasHr, hasCadence: hasCad, hasAltitude: hasAlt
     },

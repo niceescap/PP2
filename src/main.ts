@@ -3,14 +3,16 @@
 // FIT import → Customizable blocks → Fast export
 // ═══════════════════════════════════════════════════════════════
 
-import { parseFIT, FitActivity } from './fit/index.js';
-import { OverlayConfig, Block, createDefaultConfig, drawOverlay } from './blocks.js';
+import { parseFIT, parseGPX, FitActivity } from './fit/index.js';
+import { OverlayConfig, Block, createDefaultConfig, createConfigForResolution, drawOverlay } from './blocks.js';
+import { PRESET_REGISTRY, applyPresetById } from './presets.js';
 import { VideoExporter, WebCodecsExporter, isWebCodecsSupported } from './export/index.js';
 
 // ── State ───────────────────────────────────────
 interface AppState {
   activity: FitActivity | null;
   config: OverlayConfig;
+  fileName: string;
   selectedPointIdx: number;
   isPlaying: boolean;
   playTimer: number | null;
@@ -18,6 +20,7 @@ interface AppState {
   exportStartIdx: number;
   exportEndIdx: number;
   selectedBlockId: string | null;
+  activePresetId: string;
   isDragging: boolean;
   isResizing: boolean;
   dragOffsetX: number;
@@ -28,8 +31,7 @@ interface AppState {
 const state: AppState = {
   activity: null,
   config: createDefaultConfig(1920, 1080),
-  fitBuffer: null as ArrayBuffer | null,
-  fileName: '' as string,
+  fileName: '',
   selectedPointIdx: 0,
   isPlaying: false,
   playTimer: null,
@@ -37,6 +39,7 @@ const state: AppState = {
   exportStartIdx: 0,
   exportEndIdx: 0,
   selectedBlockId: null,
+  activePresetId: 'default',
   isDragging: false,
   isResizing: false,
   dragOffsetX: 0,
@@ -55,6 +58,8 @@ const dom = {
   sectionStats: document.getElementById('sectionStats') as HTMLElement,
   sectionTimeline: document.getElementById('sectionTimeline') as HTMLElement,
   sectionBlocks: document.getElementById('sectionBlocks') as HTMLElement,
+  sectionPresets: document.getElementById('sectionPresets') as HTMLElement,
+  presetGrid: document.getElementById('presetGrid') as HTMLElement,
 
   statsGrid: document.getElementById('statsGrid') as HTMLElement,
   timelineSlider: document.getElementById('timelineSlider') as HTMLInputElement,
@@ -89,6 +94,7 @@ function init(): void {
   setupTimelineControls();
   setupExportControls();
   setupCanvasInteraction();
+  renderPresets();
   updateCanvasSize();
   detectEngine();
   showToast('PaceParser2 prêt — importez un FIT');
@@ -141,17 +147,21 @@ function loadFile(file: File): void {
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
-      const buffer = e.target?.result as ArrayBuffer;
-      const activity = parseFIT(buffer);
+      const isGpx = /\.gpx$/i.test(file.name);
+      const activity = isGpx
+        ? parseGPX(e.target?.result as string)
+        : parseFIT(e.target?.result as ArrayBuffer);
       if (activity.points.length === 0) {
         showToast('❌ Aucune donnée trouvée');
         return;
       }
       state.activity = activity;
-      state.fitBuffer = buffer;
       state.fileName = file.name;
       state.selectedPointIdx = 0;
-      state.config = createDefaultConfig(state.config.width, state.config.height);
+      state.config = applyPresetById(
+        createDefaultConfig(state.config.width, state.config.height),
+        state.activePresetId
+      );
 
       enableSections();
       renderStats(activity);
@@ -165,7 +175,35 @@ function loadFile(file: File): void {
       showToast(`❌ Erreur: ${err.message}`);
     }
   };
-  reader.readAsArrayBuffer(file);
+  if (/\.gpx$/i.test(file.name)) {
+    reader.readAsText(file);
+  } else {
+    reader.readAsArrayBuffer(file);
+  }
+}
+
+// ── Presets ─────────────────────────────────────
+function renderPresets(): void {
+  dom.presetGrid.innerHTML = PRESET_REGISTRY.map(p => `
+    <button class="preset-card ${state.activePresetId === p.id ? 'selected' : ''}" data-preset-id="${p.id}">
+      <span class="preset-thumb" style="background:${p.thumbnail}"></span>
+      <span class="preset-name">${p.name}</span>
+      <span class="preset-desc">${p.description}</span>
+    </button>
+  `).join('');
+
+  dom.presetGrid.querySelectorAll<HTMLElement>('[data-preset-id]').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.presetId!;
+      state.activePresetId = id;
+      state.config = applyPresetById(state.config, id);
+      state.selectedBlockId = null;
+      renderPresets();
+      renderBlocksList();
+      renderPreview();
+      showToast(`🎨 Thème ${id} appliqué`);
+    });
+  });
 }
 
 // ── Stats ───────────────────────────────────────
@@ -261,8 +299,8 @@ function renderBlocksList(): void {
   `).join('');
 
   // Events
-  dom.blocksList.querySelectorAll('.block-item').forEach(el => {
-    const id = (el as HTMLElement).dataset.blockId!;
+  dom.blocksList.querySelectorAll<HTMLElement>('.block-item').forEach(el => {
+    const id = el.dataset.blockId!;
     el.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).dataset.action === 'toggle') return;
       state.selectedBlockId = state.selectedBlockId === id ? null : id;
@@ -270,9 +308,9 @@ function renderBlocksList(): void {
     });
   });
 
-  dom.blocksList.querySelectorAll('[data-action="toggle"]').forEach(el => {
+  dom.blocksList.querySelectorAll<HTMLElement>('[data-action="toggle"]').forEach(el => {
     el.addEventListener('change', (e) => {
-      const id = (e.target as HTMLElement).closest('.block-item')!.dataset.blockId!;
+      const id = el.closest<HTMLElement>('.block-item')!.dataset.blockId!;
       const block = state.config.blocks.find(b => b.id === id);
       if (block) { block.visible = (e.target as HTMLInputElement).checked; renderPreview(); }
     });
@@ -438,6 +476,7 @@ function toggleBg(): void {
   state.config.bgColor = state.config.bgMode === 'green' ? '#00ff66' : state.config.bgMode === 'black' ? '#000000' : 'transparent';
   renderPreview();
   const labels: Record<string, string> = { green: '🟩 Vert', transparent: '⬜ Transparent', black: '⬛ Noir' };
+  dom.btnToggleBg.textContent = labels[state.config.bgMode];
   showToast(labels[state.config.bgMode]);
 }
 
@@ -463,7 +502,11 @@ function startExport(): void {
   const endIdx = state.exportEndIdx;
   if (endIdx <= startIdx) { showToast('⚠️ Plage invalide'); return; }
 
-  const exportPoints = state.activity.points.slice(startIdx, endIdx + 1);
+  const activity = state.activity;
+  // Blocks are authored in pixels for the preview resolution: scale the
+  // layout to the exported resolution so nothing overflows the frame.
+  const exportConfig = createConfigForResolution(state.config, res[0], res[1]);
+  const exportPoints = activity.points.slice(startIdx, endIdx + 1);
   const durationSec = exportPoints[exportPoints.length - 1].elapsed - exportPoints[0].elapsed;
   const totalFrames = exportPoints.length;
 
@@ -497,23 +540,23 @@ function startExport(): void {
   // ── Choix du moteur ──────────────────────────────
   // WebCodecs MP4 = rapide, timeline-exacte → préféré
   // MediaRecorder WebM = temps réel → fallback (ou si transparent)
-  const preferWebCodecs = isWebCodecsSupported() && state.config.bgMode !== 'transparent';
+  const preferWebCodecs = isWebCodecsSupported() && exportConfig.bgMode !== 'transparent';
 
   const startMediaRecorder = () => {
     showToast('🐢 Export WebM (temps réel)');
     const exporter = new VideoExporter(
       dom.canvas,
-      state.config,
+      exportConfig,
       exportPoints,
-      state.activity.points,
-      state.activity.bounds,
+      activity.points,
+      activity.bounds,
       {
         width: res[0],
         height: res[1],
         fps: 1,
         totalFrames,
         samplesPerSec: 1,
-        bgMode: state.config.bgMode,
+        bgMode: exportConfig.bgMode,
         onProgress,
         onComplete: (blob, filename) => {
           download(blob, filename);
@@ -535,10 +578,10 @@ function startExport(): void {
     let fallbackDone = false;
     const exporter = new WebCodecsExporter(
       dom.canvas,
-      state.config,
+      exportConfig,
       exportPoints,
-      state.activity.points,
-      state.activity.bounds,
+      activity.points,
+      activity.bounds,
       {
         width: res[0],
         height: res[1],
@@ -561,7 +604,7 @@ function startExport(): void {
     state.activeExporter = exporter;
     exporter.start();
   } else {
-    if (state.config.bgMode === 'transparent') {
+    if (exportConfig.bgMode === 'transparent') {
       showToast('ℹ️ Fond transparent → WebM temps réel (pas d\'alpha en MP4)');
     }
     startMediaRecorder();
@@ -584,6 +627,7 @@ function stopExport(): void {
 function enableSections(): void {
   dom.sectionStats.classList.remove('hidden');
   dom.sectionTimeline.classList.remove('hidden');
+  dom.sectionPresets.classList.remove('hidden');
   dom.sectionBlocks.classList.remove('hidden');
   dom.btnGenerate.disabled = false;
 
